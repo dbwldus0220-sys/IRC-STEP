@@ -42,6 +42,42 @@ Go_Straight_start(0.03, 0.20, 0.02)
 - Direction mapping applied from `callback.cpp`
 - Temporary Dynamixel position candidates are within 0~4095
 
+### 최근 IK solution continuity 분석 결과
+
+- frame 398~405에서 roll 계열 관절인 `RL1`, `RL5`, `LL1`, `LL5`가 급격히 변하는 문제가 확인되었습니다.
+- 같은 구간의 좌·우 발 reference trajectory는 부드럽게 변하므로 발 궤적 자체의 jump 문제는 아닌 것으로 판단합니다.
+- Unwrapped angle 분석에서도 급격한 변화가 유지되므로 wrap angle 표현 문제는 아닙니다.
+- Dynamixel position 후보값은 0~4095 범위 안에 있으므로 position 범위 초과 문제도 아닙니다.
+- 현재 문제는 IK 내부 마지막 iteration의 update가 아니라, 이전 frame과 현재 frame 사이에서 최종 IK 해가 크게 이동하는 **IK solution continuity 문제**로 분류합니다.
+
+대표 측정값은 다음과 같습니다.
+
+- Max IK frame delta: 약 `0.410 rad/frame` (frame 402)
+- Max roll joint velocity: 약 `41.03 rad/s`
+- Max roll motor delta: 약 `267.49 tick/frame`
+
+Numerical IK stability 검사에서도 condition number 경고가 확인되었습니다.
+
+- LL maximum condition number: 약 `2.47e7` (frame 186)
+- RL maximum condition number: 약 `7.72e5` (frame 354)
+
+### Offline roll rate limit candidate
+
+실제 C++ IK 결과는 변경하지 않고 `plot_debug.py`에서만 roll joint rate limit 후보를 비교했습니다. 임시 제한 `0.05 rad/frame` 적용 결과는 다음과 같습니다.
+
+- Roll joint velocity: 약 `41.03 → 5.00 rad/s`
+- Roll motor delta: 약 `267.49 → 32.59 tick/frame`
+- 원본 angle과 limited candidate 사이의 최대 차이: 약 `1.82 rad`
+
+Rate limit은 velocity와 motor delta를 낮추지만 원본 IK 해와 큰 각도 차이를 만들고 acceleration 문제도 완전히 해결하지 못합니다. 따라서 최종 해결책이 아니라, IK solver를 안정화하기 전 검토할 수 있는 hardware safety guard 후보로만 기록합니다. Rate-limited 결과 역시 실제 모터 명령이 아닌 offline candidate입니다.
+
+### 현재 안전 결론
+
+- IK solver 안정화 또는 frame-to-frame solution continuity 개선 전에는 full walking hardware test를 진행하지 않습니다.
+- Rate limit candidate를 현재 상태 그대로 실제 보행 명령에 사용하지 않습니다.
+- 실제 하드웨어 확인은 `single_motor_test`를 사용해 motor 17 또는 motor 18 단일 모터부터 진행해야 합니다.
+- 실물 로봇 없이 전체 보행을 실행하지 않습니다.
+
 ### 다리 모터 매핑
 
 | Joint | Description | Motor ID |

@@ -1,13 +1,34 @@
 #pragma once
 #include <eigen3/Eigen/Dense>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 using Eigen::Matrix4d;
 using Eigen::VectorXd;
 using Eigen::MatrixXd;
 
 namespace BRP_Kinematics{
+
+#ifdef STEP_DEBUG_SIMULATION
+inline double last_RL_condition_number = std::numeric_limits<double>::infinity();
+inline double last_LL_condition_number = std::numeric_limits<double>::infinity();
+inline double last_RL_min_singular_value = 0.0;
+inline double last_LL_min_singular_value = 0.0;
+inline int last_RL_iteration_count = 0;
+inline int last_LL_iteration_count = 0;
+inline double last_RL_final_ERR = std::numeric_limits<double>::infinity();
+inline double last_LL_final_ERR = std::numeric_limits<double>::infinity();
+inline bool last_RL_converged = false;
+inline bool last_LL_converged = false;
+inline double last_RL_max_abs_delta_theta = 0.0;
+inline double last_LL_max_abs_delta_theta = 0.0;
+inline double last_RL_delta_theta_1 = 0.0;
+inline double last_RL_delta_theta_5 = 0.0;
+inline double last_LL_delta_theta_1 = 0.0;
+inline double last_LL_delta_theta_5 = 0.0;
+#endif
 
 // th: [6x1], link: [7x1], PR: [6x1] (x, y, z, roll, pitch, yaw)
 void BRP_RL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR){
@@ -64,14 +85,33 @@ void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
     int iter, i, j, k;
     double sum = 0.0;
 
+#ifdef STEP_DEBUG_SIMULATION
+    last_RL_condition_number = std::numeric_limits<double>::infinity();
+    last_RL_min_singular_value = 0.0;
+    last_RL_iteration_count = 0;
+    last_RL_final_ERR = std::numeric_limits<double>::infinity();
+    last_RL_converged = false;
+    last_RL_max_abs_delta_theta = 0.0;
+    last_RL_delta_theta_1 = 0.0;
+    last_RL_delta_theta_5 = 0.0;
+#endif
+
     for (iter = 0; iter < 100; ++iter){
         old_Q = th;
         BRP_RL_FK(th, link, PR);
         F = target_PR - PR; // Error_vector
         ERR = F.norm();
 
+#ifdef STEP_DEBUG_SIMULATION
+        last_RL_iteration_count = iter + 1;
+        last_RL_final_ERR = ERR;
+#endif
+
         if (ERR < 0.0001){
             IK_theta = th;
+#ifdef STEP_DEBUG_SIMULATION
+            last_RL_converged = true;
+#endif
             break;
         }
         else if (iter == 99){
@@ -93,6 +133,22 @@ void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
             for (j = 0; j < dof; ++j)
                 J(i, j) = (New_PR(i, j) - old_PR(i)) / del_Q;
 
+#ifdef STEP_DEBUG_SIMULATION
+        const Eigen::JacobiSVD<Eigen::MatrixXd> svd(J);
+        const auto singular_values = svd.singularValues();
+        const double max_singular_value = singular_values.maxCoeff();
+        const double min_singular_value = singular_values.minCoeff();
+        constexpr double singular_value_epsilon = 1.0e-12;
+        last_RL_min_singular_value = min_singular_value;
+        if (!std::isfinite(min_singular_value)
+            || min_singular_value <= singular_value_epsilon) {
+            last_RL_condition_number = std::numeric_limits<double>::infinity();
+        } else {
+            last_RL_condition_number = max_singular_value / min_singular_value;
+        }
+        last_RL_max_abs_delta_theta = 0.0;
+#endif
+
         // Inverse Matrix (Using Eigen)
         Inv_J = J.inverse();
 
@@ -101,6 +157,12 @@ void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
             double sum = 0.0;
             for (j = 0; j < dof; ++j)
                 sum += Inv_J(k, j) * F(j);
+#ifdef STEP_DEBUG_SIMULATION
+            last_RL_max_abs_delta_theta =
+                std::max(last_RL_max_abs_delta_theta, std::abs(sum));
+            if (k == 1) last_RL_delta_theta_1 = sum;
+            if (k == 5) last_RL_delta_theta_5 = sum;
+#endif
             th(k) = old_Q(k) + sum;
         }
 
@@ -162,14 +224,33 @@ void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
     int iter, i, j, k;
     double sum = 0.0;
 
+#ifdef STEP_DEBUG_SIMULATION
+    last_LL_condition_number = std::numeric_limits<double>::infinity();
+    last_LL_min_singular_value = 0.0;
+    last_LL_iteration_count = 0;
+    last_LL_final_ERR = std::numeric_limits<double>::infinity();
+    last_LL_converged = false;
+    last_LL_max_abs_delta_theta = 0.0;
+    last_LL_delta_theta_1 = 0.0;
+    last_LL_delta_theta_5 = 0.0;
+#endif
+
     for (iter = 0; iter < 100; ++iter){
         old_Q = th;
         BRP_LL_FK(th, link, PR);
         F = target_PR - PR; // Error_vector
         ERR = F.norm();
 
+#ifdef STEP_DEBUG_SIMULATION
+        last_LL_iteration_count = iter + 1;
+        last_LL_final_ERR = ERR;
+#endif
+
         if (ERR < 0.0001){
             IK_theta = th;
+#ifdef STEP_DEBUG_SIMULATION
+            last_LL_converged = true;
+#endif
             break;
         }
         else if (iter == 99){
@@ -191,6 +272,22 @@ void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
             for (j = 0; j < dof; ++j)
                 J(i, j) = (New_PR(i, j) - old_PR(i)) / del_Q;
 
+#ifdef STEP_DEBUG_SIMULATION
+        const Eigen::JacobiSVD<Eigen::MatrixXd> svd(J);
+        const auto singular_values = svd.singularValues();
+        const double max_singular_value = singular_values.maxCoeff();
+        const double min_singular_value = singular_values.minCoeff();
+        constexpr double singular_value_epsilon = 1.0e-12;
+        last_LL_min_singular_value = min_singular_value;
+        if (!std::isfinite(min_singular_value)
+            || min_singular_value <= singular_value_epsilon) {
+            last_LL_condition_number = std::numeric_limits<double>::infinity();
+        } else {
+            last_LL_condition_number = max_singular_value / min_singular_value;
+        }
+        last_LL_max_abs_delta_theta = 0.0;
+#endif
+
         // Inverse Matrix (Using Eigen)
         Inv_J = J.inverse();
 
@@ -199,6 +296,12 @@ void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
             double sum = 0.0;
             for (j = 0; j < dof; ++j)
                 sum += Inv_J(k, j) * F(j);
+#ifdef STEP_DEBUG_SIMULATION
+            last_LL_max_abs_delta_theta =
+                std::max(last_LL_max_abs_delta_theta, std::abs(sum));
+            if (k == 1) last_LL_delta_theta_1 = sum;
+            if (k == 5) last_LL_delta_theta_5 = sum;
+#endif
             th(k) = old_Q(k) + sum;
         }
 

@@ -3933,6 +3933,7 @@ void Pick::Huddle(const MatrixXd& RFx, int Index_CNT,double& RL, double& LL, dou
 #ifdef STEP_DEBUG_SIMULATION
 #include <fstream>
 #include <iostream>
+#include <limits>
 
 void RunStepWalkDebugOnce() {
     Trajectory trajectory;
@@ -3969,6 +3970,42 @@ void RunStepWalkDebugOnce() {
         return;
     }
 
+    const Eigen::MatrixXd& ref_rl_x = trajectory.Get_Ref_RL_X();
+    const Eigen::MatrixXd& ref_rl_y = trajectory.Get_Ref_RL_Y();
+    const Eigen::MatrixXd& ref_rl_z = trajectory.Get_Ref_RL_Z();
+    const Eigen::MatrixXd& ref_ll_x = trajectory.Get_Ref_LL_X();
+    const Eigen::MatrixXd& ref_ll_y = trajectory.Get_Ref_LL_Y();
+    const Eigen::MatrixXd& ref_ll_z = trajectory.Get_Ref_LL_Z();
+    const Eigen::MatrixXd& com_y = trajectory.Ycom;
+    const Eigen::MatrixXd& rf_y = trajectory.RF_yFoot;
+    const Eigen::MatrixXd& lf_y = trajectory.LF_yFoot;
+    const Eigen::RowVectorXd zmp_y_ref = trajectory.Get_yZMP();
+    const Eigen::VectorXd cp_y = trajectory.Get_yCP();
+
+    const Eigen::Index reference_column_count = std::min({
+        ref_rl_x.cols(), ref_rl_y.cols(), ref_rl_z.cols(),
+        ref_ll_x.cols(), ref_ll_y.cols(), ref_ll_z.cols()
+    });
+    const Eigen::Index reference_row_count = std::min({
+        ref_rl_x.rows(), ref_rl_y.rows(), ref_rl_z.rows(),
+        ref_ll_x.rows(), ref_ll_y.rows(), ref_ll_z.rows()
+    });
+    if (reference_row_count <= 0 || reference_column_count <= 0) {
+        std::cerr << "[STEP DEBUG][SLOW TEST][ERROR] Foot reference matrix is empty."
+                  << std::endl;
+        return;
+    }
+
+    const int debug_frame_count = std::min(
+        sim_n,
+        static_cast<int>(reference_column_count)
+    );
+    if (debug_frame_count < sim_n) {
+        std::cout << "[STEP DEBUG][SLOW TEST][WARNING] Limiting debug frames from "
+                  << sim_n << " to " << debug_frame_count
+                  << " to stay within foot reference matrix columns." << std::endl;
+    }
+
     std::ofstream csv("walk_forward_debug_slow.csv");
     if (!csv.is_open()) {
         std::cerr << "[STEP DEBUG][SLOW TEST][ERROR] Failed to open "
@@ -3979,7 +4016,39 @@ void RunStepWalkDebugOnce() {
         << ",RL0_raw,RL1_raw,RL2_raw,RL3_raw,RL4_raw,RL5_raw"
         << ",LL0_raw,LL1_raw,LL2_raw,LL3_raw,LL4_raw,LL5_raw"
         << ",RL0_wrap,RL1_wrap,RL2_wrap,RL3_wrap,RL4_wrap,RL5_wrap"
-        << ",LL0_wrap,LL1_wrap,LL2_wrap,LL3_wrap,LL4_wrap,LL5_wrap\n";
+        << ",LL0_wrap,LL1_wrap,LL2_wrap,LL3_wrap,LL4_wrap,LL5_wrap"
+        << ",Ref_RL_x,Ref_RL_y,Ref_RL_z,Ref_LL_x,Ref_LL_y,Ref_LL_z"
+        // Y-balance debug columns: preview COM/ZMP/CP, raw foot y, and IK y inputs.
+        << ",COM_y,ZMP_y_ref,CP_y,RF_y,LF_y,IK_RL_y_input,IK_LL_y_input"
+        // Numerical IK diagnostics recorded after both leg IK calls finish.
+        << ",RL_condition_number,LL_condition_number"
+        << ",RL_min_singular_value,LL_min_singular_value"
+        << ",RL_iteration_count,LL_iteration_count"
+        << ",RL_final_ERR,LL_final_ERR"
+        << ",RL_converged,LL_converged"
+        << ",RL_max_abs_delta_theta,LL_max_abs_delta_theta"
+        << ",RL_delta_theta_1,RL_delta_theta_5"
+        << ",LL_delta_theta_1,LL_delta_theta_5"
+        // Final IK result change from the preceding simulation frame.
+        << ",RL_frame_delta_0,RL_frame_delta_1,RL_frame_delta_2"
+        << ",RL_frame_delta_3,RL_frame_delta_4,RL_frame_delta_5"
+        << ",LL_frame_delta_0,LL_frame_delta_1,LL_frame_delta_2"
+        << ",LL_frame_delta_3,LL_frame_delta_4,LL_frame_delta_5"
+        << ",RL_max_abs_frame_delta,LL_max_abs_frame_delta\n";
+
+    const double unavailable_debug_value = std::numeric_limits<double>::quiet_NaN();
+    const auto sampleMatrix = [&](const Eigen::MatrixXd& values, int frame) {
+        if (values.rows() <= 0 || frame < 0 || frame >= values.cols()) {
+            return unavailable_debug_value;
+        }
+        return values(0, frame);
+    };
+    const auto sampleVector = [&](const auto& values, int frame) {
+        if (frame < 0 || frame >= values.size()) {
+            return unavailable_debug_value;
+        }
+        return values(frame);
+    };
 
     const char* right_joint_names[6] = {"RHY", "RHR", "RHP", "RKN", "RAP", "RAR"};
     const char* left_joint_names[6] = {"LHY", "LHR", "LHP", "LKN", "LAP", "LAR"};
@@ -4078,14 +4147,40 @@ void RunStepWalkDebugOnce() {
         }
     };
 
-    for (int frame = 0; frame < sim_n; ++frame) {
-        ik.BRP_Simulation(trajectory.Get_Ref_RL_X(),
-                          trajectory.Get_Ref_RL_Y(),
-                          trajectory.Get_Ref_RL_Z(),
-                          trajectory.Get_Ref_LL_X(),
-                          trajectory.Get_Ref_LL_Y(),
-                          trajectory.Get_Ref_LL_Z(),
+    double previous_rl_th[6] = {};
+    double previous_ll_th[6] = {};
+    bool previous_frame_available = false;
+
+    for (int frame = 0; frame < debug_frame_count; ++frame) {
+        ik.BRP_Simulation(ref_rl_x,
+                          ref_rl_y,
+                          ref_rl_z,
+                          ref_ll_x,
+                          ref_ll_y,
+                          ref_ll_z,
                           frame);
+
+        double rl_frame_delta[6] = {};
+        double ll_frame_delta[6] = {};
+        double rl_max_abs_frame_delta = 0.0;
+        double ll_max_abs_frame_delta = 0.0;
+        if (previous_frame_available) {
+            for (int joint_index = 0; joint_index < 6; ++joint_index) {
+                rl_frame_delta[joint_index] =
+                    ik.RL_th[joint_index] - previous_rl_th[joint_index];
+                ll_frame_delta[joint_index] =
+                    ik.LL_th[joint_index] - previous_ll_th[joint_index];
+                rl_max_abs_frame_delta = std::max(
+                    rl_max_abs_frame_delta,
+                    std::abs(rl_frame_delta[joint_index])
+                );
+                ll_max_abs_frame_delta = std::max(
+                    ll_max_abs_frame_delta,
+                    std::abs(ll_frame_delta[joint_index])
+                );
+            }
+        }
+
         csv << frame;
         for (double angle : ik.RL_th) {
             csv << ',' << angle;
@@ -4099,7 +4194,50 @@ void RunStepWalkDebugOnce() {
         for (double angle : ik.LL_th) {
             csv << ',' << wrapAngle(angle);
         }
+        csv << ',' << ref_rl_x(0, frame)
+            << ',' << ref_rl_y(0, frame)
+            << ',' << ref_rl_z(0, frame)
+            << ',' << ref_ll_x(0, frame)
+            << ',' << ref_ll_y(0, frame)
+            << ',' << ref_ll_z(0, frame)
+            << ',' << sampleMatrix(com_y, frame)
+            << ',' << sampleVector(zmp_y_ref, frame)
+            << ',' << sampleVector(cp_y, frame)
+            << ',' << sampleMatrix(rf_y, frame)
+            << ',' << sampleMatrix(lf_y, frame)
+            << ',' << ref_rl_y(0, frame)
+            << ',' << ref_ll_y(0, frame)
+            << ',' << BRP_Kinematics::last_RL_condition_number
+            << ',' << BRP_Kinematics::last_LL_condition_number
+            << ',' << BRP_Kinematics::last_RL_min_singular_value
+            << ',' << BRP_Kinematics::last_LL_min_singular_value
+            << ',' << BRP_Kinematics::last_RL_iteration_count
+            << ',' << BRP_Kinematics::last_LL_iteration_count
+            << ',' << BRP_Kinematics::last_RL_final_ERR
+            << ',' << BRP_Kinematics::last_LL_final_ERR
+            << ',' << (BRP_Kinematics::last_RL_converged ? 1 : 0)
+            << ',' << (BRP_Kinematics::last_LL_converged ? 1 : 0)
+            << ',' << BRP_Kinematics::last_RL_max_abs_delta_theta
+            << ',' << BRP_Kinematics::last_LL_max_abs_delta_theta
+            << ',' << BRP_Kinematics::last_RL_delta_theta_1
+            << ',' << BRP_Kinematics::last_RL_delta_theta_5
+            << ',' << BRP_Kinematics::last_LL_delta_theta_1
+            << ',' << BRP_Kinematics::last_LL_delta_theta_5;
+        for (double delta : rl_frame_delta) {
+            csv << ',' << delta;
+        }
+        for (double delta : ll_frame_delta) {
+            csv << ',' << delta;
+        }
+        csv << ',' << rl_max_abs_frame_delta
+            << ',' << ll_max_abs_frame_delta;
         csv << '\n';
+
+        for (int joint_index = 0; joint_index < 6; ++joint_index) {
+            previous_rl_th[joint_index] = ik.RL_th[joint_index];
+            previous_ll_th[joint_index] = ik.LL_th[joint_index];
+        }
+        previous_frame_available = true;
 
         if (frame == 0) {
             printJointAngles("Frame 0 raw RL_th (rad)", ik.RL_th);
@@ -4112,7 +4250,7 @@ void RunStepWalkDebugOnce() {
     }
     csv.close();
     std::cout << "[STEP DEBUG][SLOW TEST] Saved walk_forward_debug_slow.csv ("
-              << sim_n << " frames)." << std::endl;
+              << debug_frame_count << " frames)." << std::endl;
 
     if (!invalid_found) {
         std::cout << "[STEP DEBUG] No NaN or Inf detected." << std::endl;

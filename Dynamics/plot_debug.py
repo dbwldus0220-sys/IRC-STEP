@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -14,9 +15,12 @@ warning_messages = []
 check_status = {
     "Trajectory Check": "PASS",
     "IK Angle Check": "PASS",
+    "IK Numerical Stability Check": "PASS",
+    "IK Solution Continuity Check": "PASS",
     "Joint Velocity Check": "PASS",
     "Joint Acceleration Check": "PASS",
     "Dynamixel Position Check": "PASS",
+    "Motor Command Delta Check": "PASS",
 }
 
 
@@ -134,58 +138,103 @@ for col in delta_cols:
     plt.savefig(f"{col}_delta.png")
     plt.close()
 
-    velocity = delta / del_t
-    max_abs_velocity = velocity.abs().max()
-    print(f"{col} max abs(velocity): {max_abs_velocity:.9f} rad/s")
+print("Saved selected wrapped joint delta plots as PNG files.")
 
-    velocity_violations = velocity.abs() > velocity_limit
-    for row_index in velocity[velocity_violations].index:
+acceleration_limit = 100.0
+joint_motion_data = {}
+joint_acceleration_warning_representatives = []
+joint_velocity_maxima = []
+joint_acceleration_maxima = []
+
+for col in cols:
+    if col not in df.columns:
+        print(f"Skipped unwrapped velocity/acceleration check for {col}: column not found.")
+        continue
+
+    unwrapped_angle = pd.Series(
+        np.unwrap(df[col].to_numpy()),
+        index=df.index,
+    )
+    velocity = unwrapped_angle.diff() / del_t
+    valid_velocity = velocity.dropna()
+    acceleration = velocity.diff() / del_t
+    valid_acceleration = acceleration.dropna()
+    joint_motion_data[col] = {
+        "angle": unwrapped_angle,
+        "velocity": velocity,
+        "acceleration": acceleration,
+    }
+    max_abs_velocity = valid_velocity.abs().max()
+    max_abs_acceleration = valid_acceleration.abs().max()
+
+    if not valid_velocity.empty:
+        max_velocity_row_index = valid_velocity.abs().idxmax()
+        joint_velocity_maxima.append({
+            "joint": col,
+            "frame": int(df.loc[max_velocity_row_index, "frame"]),
+            "max_abs_velocity": max_abs_velocity,
+        })
+    if not valid_acceleration.empty:
+        max_acceleration_row_index = valid_acceleration.abs().idxmax()
+        joint_acceleration_maxima.append({
+            "joint": col,
+            "frame": int(df.loc[max_acceleration_row_index, "frame"]),
+            "max_abs_acceleration": max_abs_acceleration,
+        })
+
+    velocity_violations = valid_velocity.abs() > velocity_limit
+    acceleration_violations = valid_acceleration.abs() > acceleration_limit
+    acceleration_warning_count = int(acceleration_violations.sum())
+
+    print(
+        f"{col} max abs velocity using unwrapped angle: "
+        f"{max_abs_velocity:.9f} rad/s"
+    )
+    print(
+        f"{col} max abs acceleration using unwrapped angle: "
+        f"{max_abs_acceleration:.9f} rad/s^2"
+    )
+    print(f"{col} acceleration warning count: {acceleration_warning_count}")
+
+    if velocity_violations.any():
+        violation_velocities = valid_velocity[velocity_violations]
+        row_index = violation_velocities.abs().idxmax()
         warning_message = (
-            f"Joint velocity limit violation: joint={col}, "
+            f"Joint velocity limit exceeded using unwrapped angle: joint={col}, "
             f"frame={int(df.loc[row_index, 'frame'])}, "
-            f"velocity={velocity.loc[row_index]:.9f} rad/s"
+            f"velocity={valid_velocity.loc[row_index]:.9f} rad/s, "
+            f"count={int(velocity_violations.sum())}"
         )
         record_warning("Joint Velocity Check", warning_message)
 
+    if acceleration_violations.any():
+        violation_accelerations = valid_acceleration[acceleration_violations]
+        row_index = violation_accelerations.abs().idxmax()
+        joint_acceleration_warning_representatives.append({
+            "joint": col,
+            "row_index": row_index,
+            "frame": int(df.loc[row_index, "frame"]),
+            "acceleration": valid_acceleration.loc[row_index],
+        })
+        warning_message = (
+            f"Joint acceleration limit exceeded using unwrapped angle: joint={col}, "
+            f"frame={int(df.loc[row_index, 'frame'])}, "
+            f"acceleration={valid_acceleration.loc[row_index]:.9f} rad/s^2, "
+            f"count={acceleration_warning_count}"
+        )
+        record_warning("Joint Acceleration Check", warning_message)
+
     plt.figure()
-    plt.plot(df["frame"].iloc[1:], velocity.iloc[1:])
+    plt.plot(df.loc[valid_velocity.index, "frame"], valid_velocity)
     plt.axhline(velocity_limit, color="red", linestyle="--", label="velocity limit")
     plt.axhline(-velocity_limit, color="red", linestyle="--")
-    plt.title(f"{col} velocity")
+    plt.title(f"{col} unwrapped velocity")
     plt.xlabel("frame")
     plt.ylabel("angular velocity [rad/s]")
     plt.grid(True)
     plt.legend()
-    plt.savefig(f"{col}_velocity.png")
+    plt.savefig(f"{col}_unwrapped_velocity.png")
     plt.close()
-
-print("Saved selected wrapped joint delta plots as PNG files.")
-print("Saved selected wrapped joint velocity plots as PNG files.")
-
-acceleration_limit = 100.0
-
-for col in cols:
-    if col not in df.columns:
-        print(f"Skipped acceleration check for {col}: column not found.")
-        continue
-
-    velocity = df[col].diff() / del_t
-    acceleration = velocity.diff() / del_t
-    valid_acceleration = acceleration.dropna()
-    max_abs_acceleration = valid_acceleration.abs().max()
-    print(
-        f"{col} max abs(acceleration): "
-        f"{max_abs_acceleration:.9f} rad/s^2"
-    )
-
-    acceleration_violations = valid_acceleration.abs() > acceleration_limit
-    for row_index in valid_acceleration[acceleration_violations].index:
-        warning_message = (
-            f"Joint acceleration limit exceeded: joint={col}, "
-            f"frame={int(df.loc[row_index, 'frame'])}, "
-            f"acceleration={valid_acceleration.loc[row_index]:.9f} rad/s^2"
-        )
-        record_warning("Joint Acceleration Check", warning_message)
 
     plt.figure()
     plt.plot(df.loc[valid_acceleration.index, "frame"], valid_acceleration)
@@ -196,15 +245,16 @@ for col in cols:
         label="acceleration limit",
     )
     plt.axhline(-acceleration_limit, color="red", linestyle="--")
-    plt.title(f"{col} acceleration")
+    plt.title(f"{col} unwrapped acceleration")
     plt.xlabel("frame")
     plt.ylabel("angular acceleration [rad/s^2]")
     plt.grid(True)
     plt.legend()
-    plt.savefig(f"{col}_acceleration.png")
+    plt.savefig(f"{col}_unwrapped_acceleration.png")
     plt.close()
 
-print("Saved all wrapped joint acceleration plots as PNG files.")
+print("Saved all unwrapped joint velocity plots as PNG files.")
+print("Saved all unwrapped joint acceleration plots as PNG files.")
 
 joint_angle_min = -3.0
 joint_angle_max = 3.0
@@ -375,13 +425,654 @@ print(
     f"Saved offline candidate CSV: {candidate_output_file} "
     "(review only; no motor commands are sent)."
 )
-print("Offline candidate motor position ranges:")
+print("Offline candidate motor position ranges and frame deltas:")
+motor_position_delta_limit = 50.0
+motor_delta_warning_representatives = []
+motor_delta_maxima = []
+
 for col in cols:
     motor_id = joint_motor_map[col]["motor_id"]
     motor_position_col = f"Motor{motor_id}_pos"
+    motor_positions = candidate_df[motor_position_col]
+    motor_position_delta = motor_positions.diff()
+    valid_motor_position_delta = motor_position_delta.dropna()
+    max_abs_position_delta = valid_motor_position_delta.abs().max()
+    if not valid_motor_position_delta.empty:
+        max_delta_row_index = valid_motor_position_delta.abs().idxmax()
+        motor_delta_maxima.append({
+            "motor": f"Motor{motor_id}",
+            "frame": int(candidate_df.loc[max_delta_row_index, "frame"]),
+            "max_abs_delta_tick_per_frame": max_abs_position_delta,
+        })
     print(
-        f"{motor_position_col}: min={candidate_df[motor_position_col].min()}, "
-        f"max={candidate_df[motor_position_col].max()}"
+        f"{motor_position_col}: position min={motor_positions.min()}, "
+        f"position max={motor_positions.max()}, "
+        f"max abs position delta per frame={max_abs_position_delta} tick/frame"
+    )
+
+    plt.figure()
+    plt.plot(
+        candidate_df.loc[valid_motor_position_delta.index, "frame"],
+        valid_motor_position_delta,
+    )
+    plt.axhline(
+        motor_position_delta_limit,
+        color="red",
+        linestyle="--",
+        label="position delta limit",
+    )
+    plt.axhline(-motor_position_delta_limit, color="red", linestyle="--")
+    plt.title(f"{motor_position_col} frame-to-frame delta")
+    plt.xlabel("frame")
+    plt.ylabel("position delta [tick/frame]")
+    plt.grid(True)
+    plt.legend()
+    plt.savefig(f"{motor_position_col}_delta.png")
+    plt.close()
+
+    delta_violations = motor_position_delta.abs() > motor_position_delta_limit
+    if delta_violations.any():
+        violation_deltas = motor_position_delta[delta_violations]
+        row_index = violation_deltas.abs().idxmax()
+        motor_delta_warning_representatives.append({
+            "motor_id": motor_id,
+            "position_col": motor_position_col,
+            "row_index": row_index,
+            "frame": int(candidate_df.loc[row_index, "frame"]),
+            "delta": motor_position_delta.loc[row_index],
+        })
+        warning_message = (
+            f"Motor command position delta limit exceeded: motor_id={motor_id}, "
+            f"frame={int(candidate_df.loc[row_index, 'frame'])}, "
+            f"delta={motor_position_delta.loc[row_index]:.9f} tick"
+        )
+        record_warning("Motor Command Delta Check", warning_message)
+
+print("Saved all motor position delta plots as PNG files.")
+
+# Offline comparison only. These rate-limited candidates are never sent to motors.
+roll_rate_limit_joints = ["RL1_wrap", "RL5_wrap", "LL1_wrap", "LL5_wrap"]
+roll_rate_limit = 0.05
+roll_limited_data = {"frame": df["frame"]}
+roll_limited_comparison = []
+
+for joint in roll_rate_limit_joints:
+    limited_col = f"{joint}_limited"
+    original_angles = df[joint]
+    limited_angles = []
+
+    if not original_angles.empty:
+        previous_candidate = original_angles.iloc[0]
+        limited_angles.append(previous_candidate)
+        for original_current in original_angles.iloc[1:]:
+            candidate_delta = np.clip(
+                original_current - previous_candidate,
+                -roll_rate_limit,
+                roll_rate_limit,
+            )
+            previous_candidate += candidate_delta
+            limited_angles.append(previous_candidate)
+
+    limited_angle_series = pd.Series(limited_angles, index=original_angles.index)
+    limited_velocity = limited_angle_series.diff() / del_t
+    limited_acceleration = limited_velocity.diff() / del_t
+
+    roll_limited_data[limited_col] = limited_angle_series
+    roll_limited_data[f"{limited_col}_velocity"] = limited_velocity
+    roll_limited_data[f"{limited_col}_acceleration"] = limited_acceleration
+
+    config = joint_motor_map[joint]
+    motor_position_col = f"Motor{config['motor_id']}_pos"
+    limited_motor_positions = limited_angle_series.apply(
+        lambda angle, joint_name=joint, joint_config=config: angle_rad_to_position(
+            angle,
+            joint_name,
+            joint_config,
+        )
+    )
+    limited_motor_delta = limited_motor_positions.diff()
+    roll_limited_data[motor_position_col] = limited_motor_positions
+    roll_limited_data[f"{motor_position_col}_delta_per_frame"] = limited_motor_delta
+
+    original_velocity = joint_motion_data[joint]["velocity"]
+    original_acceleration = joint_motion_data[joint]["acceleration"]
+    original_motor_delta = candidate_df[motor_position_col].diff()
+    roll_limited_comparison.append({
+        "joint": joint,
+        "motor_id": config["motor_id"],
+        "original_max_abs_velocity": original_velocity.abs().max(),
+        "limited_max_abs_velocity": limited_velocity.abs().max(),
+        "original_max_abs_acceleration": original_acceleration.abs().max(),
+        "limited_max_abs_acceleration": limited_acceleration.abs().max(),
+        "original_max_abs_motor_delta": original_motor_delta.abs().max(),
+        "limited_max_abs_motor_delta": limited_motor_delta.abs().max(),
+    })
+
+roll_limited_candidate_df = pd.DataFrame(roll_limited_data)
+roll_limited_candidate_output_file = "motor_command_candidate_roll_limited.csv"
+roll_limited_candidate_df.to_csv(roll_limited_candidate_output_file, index=False)
+
+print("\n[Offline Roll Rate Limit Candidate]")
+print(f"Temporary roll rate limit: {roll_rate_limit:.3f} rad/frame")
+print(
+    "joint, motor_id, original_max_abs_velocity, limited_max_abs_velocity, "
+    "original_max_abs_acceleration, limited_max_abs_acceleration, "
+    "original_max_abs_motor_delta_tick_per_frame, "
+    "limited_max_abs_motor_delta_tick_per_frame"
+)
+for result in roll_limited_comparison:
+    print(
+        f"{result['joint']}, {result['motor_id']}, "
+        f"{result['original_max_abs_velocity']:.9f}, "
+        f"{result['limited_max_abs_velocity']:.9f}, "
+        f"{result['original_max_abs_acceleration']:.9f}, "
+        f"{result['limited_max_abs_acceleration']:.9f}, "
+        f"{result['original_max_abs_motor_delta']:.9f}, "
+        f"{result['limited_max_abs_motor_delta']:.9f}"
+    )
+print(
+    f"Saved offline roll rate-limited candidate CSV: "
+    f"{roll_limited_candidate_output_file} (no motor commands are sent)."
+)
+
+roll_rate_limit_candidates = [0.03, 0.05, 0.08, 0.10]
+roll_rate_limit_sweep_results = []
+
+for rate_limit_candidate in roll_rate_limit_candidates:
+    max_abs_velocity = 0.0
+    max_abs_acceleration = 0.0
+    max_abs_motor_delta = 0.0
+    max_abs_angle_difference = 0.0
+
+    for joint in roll_rate_limit_joints:
+        original_angles = df[joint]
+        limited_angles = []
+
+        if not original_angles.empty:
+            previous_candidate = original_angles.iloc[0]
+            limited_angles.append(previous_candidate)
+            for original_current in original_angles.iloc[1:]:
+                candidate_delta = np.clip(
+                    original_current - previous_candidate,
+                    -rate_limit_candidate,
+                    rate_limit_candidate,
+                )
+                previous_candidate += candidate_delta
+                limited_angles.append(previous_candidate)
+
+        limited_angle_series = pd.Series(
+            limited_angles,
+            index=original_angles.index,
+        )
+        limited_velocity = limited_angle_series.diff() / del_t
+        limited_acceleration = limited_velocity.diff() / del_t
+
+        config = joint_motor_map[joint]
+        limited_motor_positions = limited_angle_series.apply(
+            lambda angle, joint_name=joint, joint_config=config: (
+                angle_rad_to_position(angle, joint_name, joint_config)
+            )
+        )
+        limited_motor_delta = limited_motor_positions.diff()
+
+        max_abs_velocity = max(
+            max_abs_velocity,
+            limited_velocity.abs().max(),
+        )
+        max_abs_acceleration = max(
+            max_abs_acceleration,
+            limited_acceleration.abs().max(),
+        )
+        max_abs_motor_delta = max(
+            max_abs_motor_delta,
+            limited_motor_delta.abs().max(),
+        )
+        max_abs_angle_difference = max(
+            max_abs_angle_difference,
+            (original_angles - limited_angle_series).abs().max(),
+        )
+
+    roll_rate_limit_sweep_results.append({
+        "rate_limit": rate_limit_candidate,
+        "max_abs_velocity": max_abs_velocity,
+        "max_abs_acceleration": max_abs_acceleration,
+        "max_abs_motor_delta": max_abs_motor_delta,
+        "max_abs_angle_difference": max_abs_angle_difference,
+    })
+
+print("\n[Roll Rate Limit Sweep]")
+print(
+    "rate_limit_rad_per_frame, max_abs_roll_joint_velocity, "
+    "max_abs_roll_joint_acceleration, "
+    "max_abs_roll_motor_delta_tick_per_frame, "
+    "max_abs_original_candidate_angle_difference"
+)
+for result in roll_rate_limit_sweep_results:
+    print(
+        f"{result['rate_limit']:.3f}, "
+        f"{result['max_abs_velocity']:.9f}, "
+        f"{result['max_abs_acceleration']:.9f}, "
+        f"{result['max_abs_motor_delta']:.9f}, "
+        f"{result['max_abs_angle_difference']:.9f}"
+    )
+
+spike_debug_joints = ["RL1_wrap", "RL5_wrap", "LL1_wrap", "LL5_wrap"]
+spike_debug_motor_columns = [
+    "Motor13_pos", "Motor21_pos", "Motor14_pos", "Motor22_pos",
+]
+spike_debug_data = {"frame": df["frame"]}
+
+for joint in spike_debug_joints:
+    unwrapped_angle = joint_motion_data[joint]["angle"]
+    spike_debug_data[f"{joint}_angle"] = df[joint]
+    spike_debug_data[f"{joint}_unwrapped_angle"] = unwrapped_angle
+    spike_debug_data[f"{joint}_angle_delta_per_frame"] = unwrapped_angle.diff()
+    spike_debug_data[f"{joint}_velocity"] = joint_motion_data[joint]["velocity"]
+    spike_debug_data[f"{joint}_acceleration"] = joint_motion_data[joint][
+        "acceleration"
+    ]
+
+for motor_position_col in spike_debug_motor_columns:
+    motor_positions = candidate_df[motor_position_col]
+    spike_debug_data[motor_position_col] = motor_positions
+    spike_debug_data[f"{motor_position_col}_delta_per_frame"] = (
+        motor_positions.diff()
+    )
+
+spike_debug_full_df = pd.DataFrame(spike_debug_data)
+spike_debug_df = spike_debug_full_df[
+    spike_debug_full_df["frame"].between(390, 410)
+].copy()
+spike_debug_output_file = "spike_debug_frame390_410.csv"
+spike_debug_df.to_csv(spike_debug_output_file, index=False)
+print(f"Saved spike detail CSV: {spike_debug_output_file}")
+
+spike_console_df = spike_debug_df[
+    spike_debug_df["frame"].between(398, 405)
+]
+print("\n[Spike Debug Frames 398-405]")
+print("[Spike Joint Detail]")
+for joint in spike_debug_joints:
+    joint_console_columns = [
+        "frame",
+        f"{joint}_angle",
+        f"{joint}_unwrapped_angle",
+        f"{joint}_angle_delta_per_frame",
+        f"{joint}_velocity",
+        f"{joint}_acceleration",
+    ]
+    print(f"\n[{joint}]")
+    print(
+        spike_console_df[joint_console_columns].to_string(
+            index=False,
+            float_format=lambda value: f"{value:.9f}",
+        )
+    )
+
+motor_console_columns = ["frame"]
+for motor_position_col in spike_debug_motor_columns:
+    motor_console_columns.extend([
+        motor_position_col,
+        f"{motor_position_col}_delta_per_frame",
+    ])
+print("\n[Spike Motor Position Detail]")
+print(
+    spike_console_df[motor_console_columns].to_string(
+        index=False,
+        float_format=lambda value: f"{value:.9f}",
+    )
+)
+
+if all(col in df.columns for col in trajectory_cols):
+    spike_trajectory_data = {"frame": df["frame"]}
+    for trajectory_col in trajectory_cols:
+        spike_trajectory_data[trajectory_col] = df[trajectory_col]
+        spike_trajectory_data[f"{trajectory_col}_delta_per_frame"] = (
+            df[trajectory_col].diff()
+        )
+
+    spike_trajectory_df = pd.DataFrame(spike_trajectory_data)
+    spike_trajectory_console_df = spike_trajectory_df[
+        spike_trajectory_df["frame"].between(398, 405)
+    ]
+    print("\n[Spike Trajectory Detail]")
+    print(
+        spike_trajectory_console_df.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.9f}",
+        )
+    )
+else:
+    print("Spike trajectory detail skipped: reference columns not found")
+
+ik_debug_cols = [
+    "RL_condition_number", "LL_condition_number",
+    "RL_min_singular_value", "LL_min_singular_value",
+    "RL_iteration_count", "LL_iteration_count",
+    "RL_final_ERR", "LL_final_ERR",
+    "RL_converged", "LL_converged",
+    "RL_max_abs_delta_theta", "LL_max_abs_delta_theta",
+    "RL_delta_theta_1", "RL_delta_theta_5",
+    "LL_delta_theta_1", "LL_delta_theta_5",
+]
+ik_condition_number_records = []
+ik_min_singular_value_records = []
+ik_final_err_records = []
+ik_max_delta_theta_records = []
+ik_condition_number_limit = 1.0e4
+ik_min_singular_value_limit = 1.0e-6
+
+if all(col in df.columns for col in ik_debug_cols):
+    spike_ik_columns = ["frame"] + ik_debug_cols
+    spike_ik_debug_df = df.loc[
+        df["frame"].between(398, 405),
+        spike_ik_columns,
+    ]
+    print("\n[Spike IK Debug Detail]")
+    print(
+        spike_ik_debug_df.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.9e}",
+        )
+    )
+
+    for leg in ("RL", "LL"):
+        condition_col = f"{leg}_condition_number"
+        min_singular_col = f"{leg}_min_singular_value"
+        final_err_col = f"{leg}_final_ERR"
+        max_delta_col = f"{leg}_max_abs_delta_theta"
+        converged_col = f"{leg}_converged"
+
+        for row_index in df.index:
+            frame = int(df.loc[row_index, "frame"])
+            ik_condition_number_records.append({
+                "leg": leg,
+                "frame": frame,
+                "condition_number": df.loc[row_index, condition_col],
+            })
+            ik_min_singular_value_records.append({
+                "leg": leg,
+                "frame": frame,
+                "min_singular_value": df.loc[row_index, min_singular_col],
+            })
+            ik_final_err_records.append({
+                "leg": leg,
+                "frame": frame,
+                "final_ERR": df.loc[row_index, final_err_col],
+            })
+            ik_max_delta_theta_records.append({
+                "leg": leg,
+                "frame": frame,
+                "max_abs_delta_theta": df.loc[row_index, max_delta_col],
+            })
+
+        condition_violations = df[condition_col] > ik_condition_number_limit
+        if condition_violations.any():
+            violation_values = df.loc[condition_violations, condition_col]
+            row_index = violation_values.idxmax()
+            record_warning(
+                "IK Numerical Stability Check",
+                f"IK condition number limit exceeded: leg={leg}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"condition_number={df.loc[row_index, condition_col]:.9e}, "
+                f"count={int(condition_violations.sum())}",
+            )
+
+        singular_value_violations = (
+            df[min_singular_col] < ik_min_singular_value_limit
+        )
+        if singular_value_violations.any():
+            violation_values = df.loc[
+                singular_value_violations,
+                min_singular_col,
+            ]
+            row_index = violation_values.idxmin()
+            record_warning(
+                "IK Numerical Stability Check",
+                f"IK minimum singular value below limit: leg={leg}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"min_singular_value={df.loc[row_index, min_singular_col]:.9e}, "
+                f"count={int(singular_value_violations.sum())}",
+            )
+
+        convergence_failures = df[converged_col] == 0
+        if convergence_failures.any():
+            failed_err_values = df.loc[convergence_failures, final_err_col]
+            row_index = failed_err_values.idxmax()
+            record_warning(
+                "IK Numerical Stability Check",
+                f"IK convergence failure: leg={leg}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"final_ERR={df.loc[row_index, final_err_col]:.9e}, "
+                f"count={int(convergence_failures.sum())}",
+            )
+else:
+    print("IK debug columns not found, numerical stability check skipped")
+
+ik_frame_delta_cols = [
+    *[f"RL_frame_delta_{joint_index}" for joint_index in range(6)],
+    *[f"LL_frame_delta_{joint_index}" for joint_index in range(6)],
+    "RL_max_abs_frame_delta",
+    "LL_max_abs_frame_delta",
+]
+ik_frame_delta_records = []
+ik_frame_delta_limit = 0.10
+
+if all(col in df.columns for col in ik_frame_delta_cols):
+    ik_frame_delta_detail_cols = [
+        "frame",
+        "RL_frame_delta_1",
+        "RL_frame_delta_5",
+        "LL_frame_delta_1",
+        "LL_frame_delta_5",
+    ]
+    ik_frame_delta_detail_df = df.loc[
+        df["frame"].between(398, 405),
+        ik_frame_delta_detail_cols,
+    ]
+    print("\n[IK Frame Delta Detail]")
+    print(
+        ik_frame_delta_detail_df.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.9f}",
+        )
+    )
+
+    for leg in ("RL", "LL"):
+        max_frame_delta_col = f"{leg}_max_abs_frame_delta"
+        for row_index in df.index:
+            ik_frame_delta_records.append({
+                "leg": leg,
+                "frame": int(df.loc[row_index, "frame"]),
+                "max_abs_frame_delta": df.loc[row_index, max_frame_delta_col],
+            })
+
+        frame_delta_violations = df[max_frame_delta_col] > ik_frame_delta_limit
+        if frame_delta_violations.any():
+            violation_values = df.loc[
+                frame_delta_violations,
+                max_frame_delta_col,
+            ]
+            row_index = violation_values.idxmax()
+            record_warning(
+                "IK Solution Continuity Check",
+                f"IK frame delta limit exceeded: leg={leg}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"max_abs_frame_delta="
+                f"{df.loc[row_index, max_frame_delta_col]:.9f} rad/frame, "
+                f"count={int(frame_delta_violations.sum())}",
+            )
+else:
+    print("IK frame delta columns not found, solution continuity check skipped")
+
+zoom_frame_radius = 20
+max_zoom_warning_count = 5
+
+top_joint_warnings = sorted(
+    joint_acceleration_warning_representatives,
+    key=lambda warning: abs(warning["acceleration"]),
+    reverse=True,
+)[:max_zoom_warning_count]
+
+for warning in top_joint_warnings:
+    joint = warning["joint"]
+    warning_frame = warning["frame"]
+    frame_mask = df["frame"].between(
+        warning_frame - zoom_frame_radius,
+        warning_frame + zoom_frame_radius,
+    )
+
+    joint_zoom_plots = [
+        ("angle", "angle [rad]"),
+        ("velocity", "angular velocity [rad/s]"),
+        ("acceleration", "angular acceleration [rad/s^2]"),
+    ]
+    for plot_name, y_label in joint_zoom_plots:
+        values = joint_motion_data[joint][plot_name]
+        plt.figure()
+        plt.plot(df.loc[frame_mask, "frame"], values.loc[frame_mask])
+        plt.axvline(warning_frame, color="red", linestyle="--", label="warning frame")
+        plt.title(f"{joint} {plot_name} near frame {warning_frame}")
+        plt.xlabel("frame")
+        plt.ylabel(y_label)
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(f"{joint}_zoom_{plot_name}_frame{warning_frame}.png")
+        plt.close()
+
+top_motor_warnings = sorted(
+    motor_delta_warning_representatives,
+    key=lambda warning: abs(warning["delta"]),
+    reverse=True,
+)[:max_zoom_warning_count]
+
+for warning in top_motor_warnings:
+    motor_position_col = warning["position_col"]
+    warning_frame = warning["frame"]
+    frame_mask = candidate_df["frame"].between(
+        warning_frame - zoom_frame_radius,
+        warning_frame + zoom_frame_radius,
+    )
+    motor_positions = candidate_df[motor_position_col]
+    motor_position_delta = motor_positions.diff()
+
+    motor_zoom_plots = [
+        ("position", motor_positions, "position [tick]"),
+        ("delta", motor_position_delta, "position delta [tick/frame]"),
+    ]
+    for plot_name, values, y_label in motor_zoom_plots:
+        plt.figure()
+        plt.plot(candidate_df.loc[frame_mask, "frame"], values.loc[frame_mask])
+        plt.axvline(warning_frame, color="red", linestyle="--", label="warning frame")
+        plt.title(f"{motor_position_col} {plot_name} near frame {warning_frame}")
+        plt.xlabel("frame")
+        plt.ylabel(y_label)
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(
+            f"{motor_position_col}_zoom_{plot_name}_frame{warning_frame}.png"
+        )
+        plt.close()
+
+if top_joint_warnings or top_motor_warnings:
+    print(
+        "Saved warning zoom plots for up to 5 joint acceleration warnings "
+        "and 5 motor delta warnings."
+    )
+
+print("\n[Top IK Condition Number]")
+print("leg, frame, condition_number")
+for result in sorted(
+    ik_condition_number_records,
+    key=lambda item: item["condition_number"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['leg']}, {result['frame']}, "
+        f"{result['condition_number']:.9e}"
+    )
+
+print("\n[Top IK Min Singular Value]")
+print("leg, frame, min_singular_value")
+for result in sorted(
+    ik_min_singular_value_records,
+    key=lambda item: item["min_singular_value"],
+)[:10]:
+    print(
+        f"{result['leg']}, {result['frame']}, "
+        f"{result['min_singular_value']:.9e}"
+    )
+
+print("\n[Top IK Final ERR]")
+print("leg, frame, final_ERR")
+for result in sorted(
+    ik_final_err_records,
+    key=lambda item: item["final_ERR"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['leg']}, {result['frame']}, "
+        f"{result['final_ERR']:.9e}"
+    )
+
+print("\n[Top IK Max Abs Delta Theta]")
+print("leg, frame, max_abs_delta_theta")
+for result in sorted(
+    ik_max_delta_theta_records,
+    key=lambda item: item["max_abs_delta_theta"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['leg']}, {result['frame']}, "
+        f"{result['max_abs_delta_theta']:.9e}"
+    )
+
+print("\n[Top IK Frame Delta]")
+print("leg, frame, max_abs_frame_delta")
+for result in sorted(
+    ik_frame_delta_records,
+    key=lambda item: item["max_abs_frame_delta"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['leg']}, {result['frame']}, "
+        f"{result['max_abs_frame_delta']:.9f}"
+    )
+
+print("\n[Top Joint Velocity]")
+print("joint, frame, max_abs_velocity")
+for result in sorted(
+    joint_velocity_maxima,
+    key=lambda item: item["max_abs_velocity"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['joint']}, {result['frame']}, "
+        f"{result['max_abs_velocity']:.9f}"
+    )
+
+print("\n[Top Joint Acceleration]")
+print("joint, frame, max_abs_acceleration")
+for result in sorted(
+    joint_acceleration_maxima,
+    key=lambda item: item["max_abs_acceleration"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['joint']}, {result['frame']}, "
+        f"{result['max_abs_acceleration']:.9f}"
+    )
+
+print("\n[Top Motor Command Delta]")
+print("motor, frame, max_abs_delta_tick_per_frame")
+for result in sorted(
+    motor_delta_maxima,
+    key=lambda item: item["max_abs_delta_tick_per_frame"],
+    reverse=True,
+)[:10]:
+    print(
+        f"{result['motor']}, {result['frame']}, "
+        f"{result['max_abs_delta_tick_per_frame']:.9f}"
     )
 
 print("\n[Offline Debug Summary]")
