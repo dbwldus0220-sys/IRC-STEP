@@ -182,6 +182,9 @@ def angle_rad_to_position(angle_rad, joint_name, joint_config):
 
 
 print("Temporary offline Dynamixel position ranges (no commands are sent):")
+position_warning_min = 300
+position_warning_max = 3795
+
 for col in cols:
     if col not in df.columns:
         print(f"Skipped position conversion for {col}: column not found.")
@@ -189,8 +192,16 @@ for col in cols:
 
     config = joint_motor_map[col]
     positions = df[col].apply(lambda angle: angle_rad_to_position(angle, col, config))
+    position_min = positions.min()
+    position_max = positions.max()
     print(
         f"{col}: motor_id={config['motor_id']}, model={config['model']}, "
-        f"position min/max={positions.min()} / {positions.max()}"
+        f"position min/max={position_min} / {position_max}"
     )
-        
+
+    # This is not an error; it flags candidates that need extra checking before hardware use.
+    if position_min < position_warning_min or position_max > position_warning_max:
+        print(
+            f"WARNING: joint={col}, motor_id={config['motor_id']}, "
+            f"position min={position_min}, position max={position_max}"
+        )

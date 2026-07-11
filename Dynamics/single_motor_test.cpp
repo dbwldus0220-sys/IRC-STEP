@@ -1,104 +1,197 @@
+// Build: g++ -std=c++17 single_motor_test.cpp -o single_motor_test -L/usr/local/lib -ldxl_x64_cpp -pthread
+
 #include "dynamixel.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <exception>
 #include <iostream>
+#include <string>
 #include <thread>
+
+class PortCloseGuard
+{
+public:
+    PortCloseGuard(dynamixel::PortHandler* port_handler, bool& port_open)
+        : port_handler_(port_handler), port_open_(port_open)
+    {
+    }
+
+    ~PortCloseGuard()
+    {
+        if (port_open_) {
+            port_handler_->closePort();
+        }
+    }
+
+private:
+    dynamixel::PortHandler* port_handler_;
+    bool& port_open_;
+};
 
 int main()
 {
-    const uint8_t TEST_ID = 17;        // RKN, 오른무릎 후보
-    const int32_t MOVE_TICK = 10;      // 아주 작게 이동
+    const uint8_t TEST_ID = 17;    // 17: RKN, 18: LKN
+    const int32_t MOVE_TICK = 10;
     const int WAIT_MS = 1000;
+    const int32_t MIN_POSITION = 0;
+    const int32_t MAX_POSITION = 4095;
+
+    if (TEST_ID != 17 && TEST_ID != 18) {
+        std::cerr << "[ERROR] TEST_ID must be 17 (RKN) or 18 (LKN)." << std::endl;
+        return 1;
+    }
+
+    if (std::abs(MOVE_TICK) > 30) {
+        std::cerr << "[ERROR] |MOVE_TICK| must not exceed 30." << std::endl;
+        return 1;
+    }
 
     auto portHandler = dynamixel::PortHandler::getPortHandler(DEVICE_NAME);
     auto packetHandler = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION);
 
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = COMM_TX_FAIL;
+    bool port_open = false;
+    PortCloseGuard port_close_guard(portHandler, port_open);
+    bool torque_enable_attempted = false;
+    bool start_position_available = false;
+    int32_t start_position = 0;
+    int exit_code = 1;
 
-    if (!portHandler->openPort()) {
-        std::cerr << "[ERROR] Failed to open port: " << DEVICE_NAME << std::endl;
-        return 1;
+    try {
+        if (!portHandler->openPort()) {
+            std::cerr << "[ERROR] Failed to open port: " << DEVICE_NAME << std::endl;
+        } else {
+            port_open = true;
+
+            if (!portHandler->setBaudRate(BAUDRATE)) {
+                std::cerr << "[ERROR] Failed to set baudrate: " << BAUDRATE << std::endl;
+            } else {
+                uint8_t dxl_error = 0;
+                uint32_t present_position = 0;
+                int dxl_comm_result = packetHandler->read4ByteTxRx(
+                    portHandler,
+                    TEST_ID,
+                    DxlReg_PresentPosition,
+                    &present_position,
+                    &dxl_error
+                );
+
+                if (dxl_comm_result != COMM_SUCCESS || dxl_error != 0) {
+                    std::cerr << "[ERROR] Failed to read present position." << std::endl;
+                } else {
+                    start_position = static_cast<int32_t>(present_position);
+                    start_position_available = true;
+                    const int32_t target_position = start_position + MOVE_TICK;
+
+                    if (target_position < MIN_POSITION || target_position > MAX_POSITION) {
+                        std::cerr << "[ERROR] Target position is outside the valid range [0, 4095]."
+                                  << std::endl;
+                    } else {
+                        std::cout << "[INFO] TEST_ID         : " << static_cast<int>(TEST_ID) << std::endl;
+                        std::cout << "[INFO] start_position  : " << start_position << std::endl;
+                        std::cout << "[INFO] target_position : " << target_position << std::endl;
+                        std::cout << "[INFO] MOVE_TICK       : " << MOVE_TICK << std::endl;
+
+                        std::string confirmation;
+                        std::cout << "Type YES to continue" << std::endl;
+                        std::getline(std::cin, confirmation);
+
+                        if (confirmation != "YES") {
+                            std::cerr << "[ABORT] First confirmation failed." << std::endl;
+                        } else {
+                            std::cout << "Type MOTOR_ON to enable torque" << std::endl;
+                            std::getline(std::cin, confirmation);
+
+                            if (confirmation != "MOTOR_ON") {
+                                std::cerr << "[ABORT] Second confirmation failed." << std::endl;
+                            } else {
+                                dxl_error = 0;
+                                torque_enable_attempted = true;
+                                dxl_comm_result = packetHandler->write1ByteTxRx(
+                                    portHandler,
+                                    TEST_ID,
+                                    DxlReg_TorqueEnable,
+                                    1,
+                                    &dxl_error
+                                );
+
+                                if (dxl_comm_result != COMM_SUCCESS || dxl_error != 0) {
+                                    std::cerr << "[ERROR] Failed to enable torque." << std::endl;
+                                } else {
+                                    dxl_error = 0;
+                                    dxl_comm_result = packetHandler->write4ByteTxRx(
+                                        portHandler,
+                                        TEST_ID,
+                                        DxlReg_GoalPosition,
+                                        static_cast<uint32_t>(target_position),
+                                        &dxl_error
+                                    );
+
+                                    if (dxl_comm_result != COMM_SUCCESS || dxl_error != 0) {
+                                        std::cerr << "[ERROR] Failed to write target position." << std::endl;
+                                    } else {
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(WAIT_MS));
+                                        exit_code = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& exception) {
+        std::cerr << "[ERROR] Exception: " << exception.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[ERROR] Unknown exception." << std::endl;
     }
 
-    if (!portHandler->setBaudRate(BAUDRATE)) {
-        std::cerr << "[ERROR] Failed to set baudrate: " << BAUDRATE << std::endl;
+    if (port_open && torque_enable_attempted) {
+        if (start_position_available) {
+            uint8_t dxl_error = 0;
+            const int result = packetHandler->write4ByteTxRx(
+                portHandler,
+                TEST_ID,
+                DxlReg_GoalPosition,
+                static_cast<uint32_t>(start_position),
+                &dxl_error
+            );
+
+            if (result != COMM_SUCCESS || dxl_error != 0) {
+                std::cerr << "[ERROR] Failed to command return to start position." << std::endl;
+                exit_code = 1;
+            } else {
+                std::cout << "[INFO] Return to start position commanded." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(WAIT_MS));
+            }
+        }
+
+        uint8_t dxl_error = 0;
+        const int result = packetHandler->write1ByteTxRx(
+            portHandler,
+            TEST_ID,
+            DxlReg_TorqueEnable,
+            0,
+            &dxl_error
+        );
+
+        if (result != COMM_SUCCESS || dxl_error != 0) {
+            std::cerr << "[ERROR] Failed to disable torque." << std::endl;
+            exit_code = 1;
+        } else {
+            std::cout << "[INFO] Torque disabled." << std::endl;
+        }
+    }
+
+    if (port_open) {
         portHandler->closePort();
-        return 1;
+        port_open = false;
     }
 
-    std::cout << "[INFO] Port opened. Testing motor ID " << int(TEST_ID) << std::endl;
-
-    uint32_t present_position = 0;
-
-    dxl_comm_result = packetHandler->read4ByteTxRx(
-        portHandler,
-        TEST_ID,
-        DxlReg_PresentPosition,
-        &present_position,
-        &dxl_error
-    );
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        std::cerr << "[ERROR] Failed to read present position." << std::endl;
-        portHandler->closePort();
-        return 1;
+    if (exit_code == 0) {
+        std::cout << "[DONE] Single-motor test completed safely." << std::endl;
     }
 
-    int32_t start_position = static_cast<int32_t>(present_position);
-    int32_t target_position = start_position + MOVE_TICK;
-
-    std::cout << "[INFO] Present position: " << start_position << std::endl;
-    std::cout << "[INFO] Target position : " << target_position << std::endl;
-    std::cout << "[WARN] Motor will move only +" << MOVE_TICK << " tick." << std::endl;
-    std::cout << "Press ENTER to continue, or Ctrl+C to cancel." << std::endl;
-    std::cin.get();
-
-    dxl_comm_result = packetHandler->write1ByteTxRx(
-        portHandler,
-        TEST_ID,
-        DxlReg_TorqueEnable,
-        1,
-        &dxl_error
-    );
-
-    if (dxl_comm_result != COMM_SUCCESS) {
-        std::cerr << "[ERROR] Failed to enable torque." << std::endl;
-        portHandler->closePort();
-        return 1;
-    }
-
-    packetHandler->write4ByteTxRx(
-        portHandler,
-        TEST_ID,
-        DxlReg_GoalPosition,
-        target_position,
-        &dxl_error
-    );
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(WAIT_MS));
-
-    packetHandler->write4ByteTxRx(
-        portHandler,
-        TEST_ID,
-        DxlReg_GoalPosition,
-        start_position,
-        &dxl_error
-    );
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(WAIT_MS));
-
-    packetHandler->write1ByteTxRx(
-        portHandler,
-        TEST_ID,
-        DxlReg_TorqueEnable,
-        0,
-        &dxl_error
-    );
-
-    portHandler->closePort();
-
-    std::cout << "[DONE] Returned to start position and torque off." << std::endl;
-    return 0;
+    return exit_code;
 }
