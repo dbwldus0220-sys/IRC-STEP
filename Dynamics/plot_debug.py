@@ -199,22 +199,26 @@ calibration_offset = {
     "LL5_wrap": -2.0 * DEG2RAD,
 }
 
-def angle_rad_to_position(angle_rad, joint_name, joint_config):
-    """Convert radians to a temporary Dynamixel position value without communication."""
-    model_config = motor_models[joint_config["model"]]
 
+def calculate_all_theta(angle_rad, joint_name, joint_config):
+    """Calculate a callback.cpp-style temporary All_Theta candidate."""
     limited_angle = min(
         max(angle_rad, joint_config["min_rad"]),
         joint_config["max_rad"],
     )
 
-    ticks_per_radian = model_config["ticks_per_revolution"] / (2.0 * math.pi)
-
-    all_theta = (
+    return (
         joint_config["direction"] * limited_angle
         + start_offset[joint_name]
         + calibration_offset[joint_name]
     )
+
+
+def angle_rad_to_position(angle_rad, joint_name, joint_config):
+    """Convert radians to a temporary Dynamixel position value without communication."""
+    model_config = motor_models[joint_config["model"]]
+    ticks_per_radian = model_config["ticks_per_revolution"] / (2.0 * math.pi)
+    all_theta = calculate_all_theta(angle_rad, joint_name, joint_config)
 
     position = (all_theta + math.pi) * ticks_per_radian
 
@@ -248,3 +252,43 @@ for col in cols:
             f"WARNING: joint={col}, motor_id={config['motor_id']}, "
             f"position min={position_min}, position max={position_max}"
         )
+
+# This CSV contains offline candidates for review only; it is not a motor command file.
+candidate_data = {"frame": df["frame"]}
+
+for all_theta_index, col in enumerate(cols):
+    config = joint_motor_map[col]
+    candidate_data[f"All_Theta{all_theta_index}"] = df[col].apply(
+        lambda angle, joint_name=col, joint_config=config: calculate_all_theta(
+            angle,
+            joint_name,
+            joint_config,
+        )
+    )
+
+for col in cols:
+    config = joint_motor_map[col]
+    candidate_data[f"Motor{config['motor_id']}_pos"] = df[col].apply(
+        lambda angle, joint_name=col, joint_config=config: angle_rad_to_position(
+            angle,
+            joint_name,
+            joint_config,
+        )
+    )
+
+candidate_df = pd.DataFrame(candidate_data)
+candidate_output_file = "motor_command_candidate.csv"
+candidate_df.to_csv(candidate_output_file, index=False)
+
+print(
+    f"Saved offline candidate CSV: {candidate_output_file} "
+    "(review only; no motor commands are sent)."
+)
+print("Offline candidate motor position ranges:")
+for col in cols:
+    motor_id = joint_motor_map[col]["motor_id"]
+    motor_position_col = f"Motor{motor_id}_pos"
+    print(
+        f"{motor_position_col}: min={candidate_df[motor_position_col].min()}, "
+        f"max={candidate_df[motor_position_col].max()}"
+    )
