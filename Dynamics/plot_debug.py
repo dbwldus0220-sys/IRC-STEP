@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -655,6 +656,121 @@ for result in roll_rate_limit_sweep_results:
         f"{result['max_abs_motor_delta']:.9f}, "
         f"{result['max_abs_angle_difference']:.9f}"
     )
+
+original_ik_csv = Path("walk_forward_debug_slow_original.csv")
+damped_ik_csv = Path("walk_forward_debug_slow_damped.csv")
+
+if original_ik_csv.exists() and damped_ik_csv.exists():
+    comparison_datasets = {
+        "original": pd.read_csv(original_ik_csv),
+        "damped": pd.read_csv(damped_ik_csv),
+    }
+    comparison_results = {}
+
+    def max_across_columns(dataset, column_names):
+        available_columns = [
+            column for column in column_names if column in dataset.columns
+        ]
+        if not available_columns:
+            return float("nan")
+        return dataset[available_columns].max().max()
+
+    def min_across_columns(dataset, column_names):
+        available_columns = [
+            column for column in column_names if column in dataset.columns
+        ]
+        if not available_columns:
+            return float("nan")
+        return dataset[available_columns].min().min()
+
+    for dataset_name, comparison_df in comparison_datasets.items():
+        max_roll_velocity = 0.0
+        max_roll_acceleration = 0.0
+        max_roll_motor_delta = 0.0
+
+        for joint in roll_rate_limit_joints:
+            if joint not in comparison_df.columns:
+                continue
+
+            unwrapped_angle = pd.Series(
+                np.unwrap(comparison_df[joint].to_numpy()),
+                index=comparison_df.index,
+            )
+            joint_velocity = unwrapped_angle.diff() / del_t
+            joint_acceleration = joint_velocity.diff() / del_t
+            max_roll_velocity = max(
+                max_roll_velocity,
+                joint_velocity.abs().max(),
+            )
+            max_roll_acceleration = max(
+                max_roll_acceleration,
+                joint_acceleration.abs().max(),
+            )
+
+            config = joint_motor_map[joint]
+            motor_positions = comparison_df[joint].apply(
+                lambda angle, joint_name=joint, joint_config=config: (
+                    angle_rad_to_position(angle, joint_name, joint_config)
+                )
+            )
+            max_roll_motor_delta = max(
+                max_roll_motor_delta,
+                motor_positions.diff().abs().max(),
+            )
+
+        converged_columns = [
+            column
+            for column in ("RL_converged", "LL_converged")
+            if column in comparison_df.columns
+        ]
+        converged_false_count = (
+            int((comparison_df[converged_columns] == 0).sum().sum())
+            if converged_columns
+            else 0
+        )
+
+        comparison_results[dataset_name] = {
+            "max_ik_condition_number": max_across_columns(
+                comparison_df,
+                ["RL_condition_number", "LL_condition_number"],
+            ),
+            "min_singular_value": min_across_columns(
+                comparison_df,
+                ["RL_min_singular_value", "LL_min_singular_value"],
+            ),
+            "max_ik_frame_delta": max_across_columns(
+                comparison_df,
+                ["RL_max_abs_frame_delta", "LL_max_abs_frame_delta"],
+            ),
+            "max_roll_joint_velocity": max_roll_velocity,
+            "max_roll_joint_acceleration": max_roll_acceleration,
+            "max_roll_motor_delta_tick_per_frame": max_roll_motor_delta,
+            "ik_final_err_max": max_across_columns(
+                comparison_df,
+                ["RL_final_ERR", "LL_final_ERR"],
+            ),
+            "converged_false_count": converged_false_count,
+        }
+
+    print("\n[Original vs Damped IK Comparison]")
+    print("metric, original, damped")
+    comparison_metric_order = [
+        "max_ik_condition_number",
+        "min_singular_value",
+        "max_ik_frame_delta",
+        "max_roll_joint_velocity",
+        "max_roll_joint_acceleration",
+        "max_roll_motor_delta_tick_per_frame",
+        "ik_final_err_max",
+        "converged_false_count",
+    ]
+    for metric in comparison_metric_order:
+        original_value = comparison_results["original"][metric]
+        damped_value = comparison_results["damped"][metric]
+        if metric == "converged_false_count":
+            print(f"{metric}, {original_value}, {damped_value}")
+        else:
+            print(f"{metric}, {original_value:.9e}, {damped_value:.9e}")
 
 spike_debug_joints = ["RL1_wrap", "RL5_wrap", "LL1_wrap", "LL5_wrap"]
 spike_debug_motor_columns = [

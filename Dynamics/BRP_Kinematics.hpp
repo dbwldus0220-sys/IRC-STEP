@@ -149,8 +149,16 @@ void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
         last_RL_max_abs_delta_theta = 0.0;
 #endif
 
-        // Inverse Matrix (Using Eigen)
+        // Keep the original inverse by default; enable DLS only for debug comparison.
+#ifdef STEP_DEBUG_DAMPED_IK
+        constexpr double damped_ik_lambda = 0.01;
+        const Eigen::MatrixXd damping =
+            damped_ik_lambda * damped_ik_lambda
+            * Eigen::MatrixXd::Identity(dof, dof);
+        Inv_J = J.transpose() * (J * J.transpose() + damping).inverse();
+#else
         Inv_J = J.inverse();
+#endif
 
         // Joint Angle Update
         for (k = 0; k < dof; ++k){
@@ -288,8 +296,16 @@ void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
         last_LL_max_abs_delta_theta = 0.0;
 #endif
 
-        // Inverse Matrix (Using Eigen)
+        // Keep the original inverse by default; enable DLS only for debug comparison.
+#ifdef STEP_DEBUG_DAMPED_IK
+        constexpr double damped_ik_lambda = 0.01;
+        const Eigen::MatrixXd damping =
+            damped_ik_lambda * damped_ik_lambda
+            * Eigen::MatrixXd::Identity(dof, dof);
+        Inv_J = J.transpose() * (J * J.transpose() + damping).inverse();
+#else
         Inv_J = J.inverse();
+#endif
 
         // Joint Angle Update
         for (k = 0; k < dof; ++k){
