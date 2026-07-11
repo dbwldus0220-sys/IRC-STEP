@@ -12,6 +12,7 @@ cols = [
 
 warning_messages = []
 check_status = {
+    "Trajectory Check": "PASS",
     "IK Angle Check": "PASS",
     "Joint Velocity Check": "PASS",
     "Joint Acceleration Check": "PASS",
@@ -45,6 +46,75 @@ delta_cols = [
 ]
 del_t = 0.01
 velocity_limit = 10.0
+
+trajectory_cols = [
+    "Ref_RL_x", "Ref_RL_y", "Ref_RL_z",
+    "Ref_LL_x", "Ref_LL_y", "Ref_LL_z",
+]
+trajectory_delta_limit = 0.02
+trajectory_velocity_limit = 1.0
+trajectory_acceleration_limit = 20.0
+trajectory_z_min = -0.005
+
+if all(col in df.columns for col in trajectory_cols):
+    for col in trajectory_cols:
+        trajectory_delta = df[col].diff()
+        trajectory_velocity = trajectory_delta / del_t
+        trajectory_acceleration = trajectory_velocity.diff() / del_t
+
+        print(
+            f"{col} max abs(delta): "
+            f"{trajectory_delta.abs().max():.9f} m/frame"
+        )
+        print(
+            f"{col} max abs(velocity): "
+            f"{trajectory_velocity.abs().max():.9f} m/s"
+        )
+        print(
+            f"{col} max abs(acceleration): "
+            f"{trajectory_acceleration.abs().max():.9f} m/s^2"
+        )
+
+        delta_violations = trajectory_delta.abs() > trajectory_delta_limit
+        for row_index in trajectory_delta[delta_violations].index:
+            warning_message = (
+                f"Trajectory delta limit exceeded: reference={col}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"delta={trajectory_delta.loc[row_index]:.9f} m/frame"
+            )
+            record_warning("Trajectory Check", warning_message)
+
+        velocity_violations = trajectory_velocity.abs() > trajectory_velocity_limit
+        for row_index in trajectory_velocity[velocity_violations].index:
+            warning_message = (
+                f"Trajectory velocity limit exceeded: reference={col}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"velocity={trajectory_velocity.loc[row_index]:.9f} m/s"
+            )
+            record_warning("Trajectory Check", warning_message)
+
+        acceleration_violations = (
+            trajectory_acceleration.abs() > trajectory_acceleration_limit
+        )
+        for row_index in trajectory_acceleration[acceleration_violations].index:
+            warning_message = (
+                f"Trajectory acceleration limit exceeded: reference={col}, "
+                f"frame={int(df.loc[row_index, 'frame'])}, "
+                f"acceleration={trajectory_acceleration.loc[row_index]:.9f} m/s^2"
+            )
+            record_warning("Trajectory Check", warning_message)
+
+        if col in ("Ref_RL_z", "Ref_LL_z"):
+            z_violations = df[col] < trajectory_z_min
+            for row_index in df.index[z_violations]:
+                warning_message = (
+                    f"Trajectory z below minimum: reference={col}, "
+                    f"frame={int(df.loc[row_index, 'frame'])}, "
+                    f"z={df.loc[row_index, col]:.9f} m"
+                )
+                record_warning("Trajectory Check", warning_message)
+else:
+    print("trajectory reference columns not found, skipped")
 
 for col in delta_cols:
     if col not in df.columns:
