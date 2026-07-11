@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -92,3 +94,56 @@ for col in cols:
 
 if not limit_violation_found:
     print("Joint angle limit check passed")
+
+# TODO: Replace all temporary motor assignments with STEP's verified wiring table,
+# encoder zero positions, joint directions, and mechanical joint limits.
+motor_models = {
+    "MX-28": {"ticks_per_revolution": 4096, "position_min": 0, "position_max": 4095},
+    "MX-64": {"ticks_per_revolution": 4096, "position_min": 0, "position_max": 4095},
+    "MX-106": {"ticks_per_revolution": 4096, "position_min": 0, "position_max": 4095},
+}
+
+# TODO: motor_id, model, direction, zero_offset, min_rad, and max_rad are placeholders.
+joint_motor_map = {
+    joint_name: {
+        "motor_id": motor_id,
+        "model": "MX-64",
+        "direction": 1,
+        "zero_offset": 2048,
+        "min_rad": -3.0,
+        "max_rad": 3.0,
+    }
+    for motor_id, joint_name in enumerate(cols, start=1)
+}
+
+
+def angle_rad_to_position(angle_rad, joint_config):
+    """Convert radians to a temporary Dynamixel position value without communication."""
+    model_config = motor_models[joint_config["model"]]
+    limited_angle = min(
+        max(angle_rad, joint_config["min_rad"]),
+        joint_config["max_rad"],
+    )
+    ticks_per_radian = model_config["ticks_per_revolution"] / (2.0 * math.pi)
+    position = round(
+        joint_config["zero_offset"]
+        + joint_config["direction"] * limited_angle * ticks_per_radian
+    )
+    return min(
+        max(position, model_config["position_min"]),
+        model_config["position_max"],
+    )
+
+
+print("Temporary offline Dynamixel position ranges (no commands are sent):")
+for col in cols:
+    if col not in df.columns:
+        print(f"Skipped position conversion for {col}: column not found.")
+        continue
+
+    config = joint_motor_map[col]
+    positions = df[col].map(lambda angle: angle_rad_to_position(angle, config))
+    print(
+        f"{col}: motor_id={config['motor_id']}, model={config['model']}, "
+        f"position min/max={positions.min()} / {positions.max()}"
+    )
