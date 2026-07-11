@@ -10,6 +10,22 @@ cols = [
     "LL0_wrap", "LL1_wrap", "LL2_wrap", "LL3_wrap", "LL4_wrap", "LL5_wrap",
 ]
 
+warning_messages = []
+check_status = {
+    "IK Angle Check": "PASS",
+    "Joint Velocity Check": "PASS",
+    "Joint Acceleration Check": "PASS",
+    "Dynamixel Position Check": "PASS",
+}
+
+
+def record_warning(category, message):
+    """Record and print one offline validation warning."""
+    check_status[category] = "WARNING"
+    warning_messages.append(message)
+    print(f"WARNING: {message}")
+
+
 for col in cols:
     if col in df.columns:
         plt.figure()
@@ -54,11 +70,12 @@ for col in delta_cols:
 
     velocity_violations = velocity.abs() > velocity_limit
     for row_index in velocity[velocity_violations].index:
-        print(
+        warning_message = (
             f"Joint velocity limit violation: joint={col}, "
             f"frame={int(df.loc[row_index, 'frame'])}, "
             f"velocity={velocity.loc[row_index]:.9f} rad/s"
         )
+        record_warning("Joint Velocity Check", warning_message)
 
     plt.figure()
     plt.plot(df["frame"].iloc[1:], velocity.iloc[1:])
@@ -93,11 +110,12 @@ for col in cols:
 
     acceleration_violations = valid_acceleration.abs() > acceleration_limit
     for row_index in valid_acceleration[acceleration_violations].index:
-        print(
-            f"WARNING: joint acceleration limit exceeded: joint={col}, "
+        warning_message = (
+            f"Joint acceleration limit exceeded: joint={col}, "
             f"frame={int(df.loc[row_index, 'frame'])}, "
             f"acceleration={valid_acceleration.loc[row_index]:.9f} rad/s^2"
         )
+        record_warning("Joint Acceleration Check", warning_message)
 
     plt.figure()
     plt.plot(df.loc[valid_acceleration.index, "frame"], valid_acceleration)
@@ -129,10 +147,11 @@ for col in cols:
 
     violations = df[(df[col] < joint_angle_min) | (df[col] > joint_angle_max)]
     for _, row in violations.iterrows():
-        print(
+        warning_message = (
             f"Joint angle limit violation: joint={col}, "
             f"frame={int(row['frame'])}, value={row[col]:.9f} rad"
         )
+        record_warning("IK Angle Check", warning_message)
         limit_violation_found = True
 
 if not limit_violation_found:
@@ -248,10 +267,12 @@ for col in cols:
 
     # This is not an error; it flags candidates that need extra checking before hardware use.
     if position_min < position_warning_min or position_max > position_warning_max:
-        print(
-            f"WARNING: joint={col}, motor_id={config['motor_id']}, "
+        warning_message = (
+            f"Dynamixel position near range end: joint={col}, "
+            f"motor_id={config['motor_id']}, "
             f"position min={position_min}, position max={position_max}"
         )
+        record_warning("Dynamixel Position Check", warning_message)
 
 # This CSV contains offline candidates for review only; it is not a motor command file.
 candidate_data = {"frame": df["frame"]}
@@ -292,3 +313,14 @@ for col in cols:
         f"{motor_position_col}: min={candidate_df[motor_position_col].min()}, "
         f"max={candidate_df[motor_position_col].max()}"
     )
+
+print("\n[Offline Debug Summary]")
+for category, status in check_status.items():
+    print(f"{category}: {status}")
+
+if not warning_messages:
+    print("No major offline issue detected.")
+else:
+    print("Warnings:")
+    for warning_message in warning_messages:
+        print(f"- {warning_message}")
