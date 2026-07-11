@@ -1,3 +1,5 @@
 Dynamics/*.png
 Dynamics/*.csv
 Dynamics/step_debug
+Dynamics/*backup*.cpp
+Dynamics/STEP_Dynamcis.cpp

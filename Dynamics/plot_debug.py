@@ -103,32 +103,78 @@ motor_models = {
     "MX-106": {"ticks_per_revolution": 4096, "position_min": 0, "position_max": 4095},
 }
 
-# TODO: motor_id, model, direction, zero_offset, min_rad, and max_rad are placeholders.
+# STEP leg motor mapping based on callback.cpp All_Theta direction.
+# TODO: callback.cpp의 All_Theta 계산식에 들어 있는 관절별 calibration offset도 나중에 반영해야 함.
+# 현재 zero_offset=2048은 임시 기준이며, 실제 하드웨어 zero position 확인 전까지 모터 명령에 사용하면 안 됨.
 joint_motor_map = {
-    joint_name: {
-        "motor_id": motor_id,
-        "model": "MX-64",
-        "direction": 1,
-        "zero_offset": 2048,
-        "min_rad": -3.0,
-        "max_rad": 3.0,
-    }
-    for motor_id, joint_name in enumerate(cols, start=1)
+    "RL0_wrap": {"motor_id": 10, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "RL1_wrap": {"motor_id": 13, "model": "MX-106", "direction":  1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "RL2_wrap": {"motor_id": 15, "model": "MX-106", "direction":  1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "RL3_wrap": {"motor_id": 17, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "RL4_wrap": {"motor_id": 19, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "RL5_wrap": {"motor_id": 21, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+
+    "LL0_wrap": {"motor_id": 12, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "LL1_wrap": {"motor_id": 14, "model": "MX-106", "direction":  1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "LL2_wrap": {"motor_id": 16, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "LL3_wrap": {"motor_id": 18, "model": "MX-106", "direction":  1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "LL4_wrap": {"motor_id": 20, "model": "MX-106", "direction":  1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0},
+    "LL5_wrap": {"motor_id": 22, "model": "MX-106", "direction": -1, "zero_offset": 2048, "min_rad": -3.0, "max_rad": 3.0}
 }
 
+DEG2RAD = math.pi / 180.0
 
-def angle_rad_to_position(angle_rad, joint_config):
+start_offset = {
+    "RL0_wrap": 0.0,
+    "RL1_wrap": 0.001941,
+    "RL2_wrap": 0.122416,
+    "RL3_wrap": 0.196013,
+    "RL4_wrap": -0.073595,
+    "RL5_wrap": 0.001941,
+
+    "LL0_wrap": 0.0,
+    "LL1_wrap": 0.001941,
+    "LL2_wrap": -0.122416,
+    "LL3_wrap": -0.196013,
+    "LL4_wrap": 0.073595,
+    "LL5_wrap": 0.001941,
+}
+
+calibration_offset = {
+    "RL0_wrap": 0.0,
+    "RL1_wrap": -3.0 * DEG2RAD,
+    "RL2_wrap": -17.0 * DEG2RAD,
+    "RL3_wrap": 40.0 * DEG2RAD,
+    "RL4_wrap": 24.22 * DEG2RAD,
+    "RL5_wrap": -2.0 * DEG2RAD,
+
+    "LL0_wrap": 0.0,
+    "LL1_wrap": 2.0 * DEG2RAD,
+    "LL2_wrap": 17.0 * DEG2RAD,
+    "LL3_wrap": -40.0 * DEG2RAD,
+    "LL4_wrap": -21.22 * DEG2RAD,
+    "LL5_wrap": -2.0 * DEG2RAD,
+}
+
+def angle_rad_to_position(angle_rad, joint_name, joint_config):
     """Convert radians to a temporary Dynamixel position value without communication."""
     model_config = motor_models[joint_config["model"]]
+
     limited_angle = min(
         max(angle_rad, joint_config["min_rad"]),
         joint_config["max_rad"],
     )
+
     ticks_per_radian = model_config["ticks_per_revolution"] / (2.0 * math.pi)
-    position = round(
-        joint_config["zero_offset"]
-        + joint_config["direction"] * limited_angle * ticks_per_radian
+
+    all_theta = (
+        joint_config["direction"] * limited_angle
+        + start_offset[joint_name]
+        + calibration_offset[joint_name]
     )
+
+    position = (all_theta + math.pi) * ticks_per_radian
+
     return min(
         max(position, model_config["position_min"]),
         model_config["position_max"],
@@ -142,8 +188,9 @@ for col in cols:
         continue
 
     config = joint_motor_map[col]
-    positions = df[col].map(lambda angle: angle_rad_to_position(angle, config))
+    positions = df[col].apply(lambda angle: angle_rad_to_position(angle, col, config))
     print(
         f"{col}: motor_id={config['motor_id']}, model={config['model']}, "
         f"position min/max={positions.min()} / {positions.max()}"
     )
+        
