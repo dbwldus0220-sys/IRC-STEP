@@ -75,6 +75,49 @@ for col in delta_cols:
 print("Saved selected wrapped joint delta plots as PNG files.")
 print("Saved selected wrapped joint velocity plots as PNG files.")
 
+acceleration_limit = 100.0
+
+for col in cols:
+    if col not in df.columns:
+        print(f"Skipped acceleration check for {col}: column not found.")
+        continue
+
+    velocity = df[col].diff() / del_t
+    acceleration = velocity.diff() / del_t
+    valid_acceleration = acceleration.dropna()
+    max_abs_acceleration = valid_acceleration.abs().max()
+    print(
+        f"{col} max abs(acceleration): "
+        f"{max_abs_acceleration:.9f} rad/s^2"
+    )
+
+    acceleration_violations = valid_acceleration.abs() > acceleration_limit
+    for row_index in valid_acceleration[acceleration_violations].index:
+        print(
+            f"WARNING: joint acceleration limit exceeded: joint={col}, "
+            f"frame={int(df.loc[row_index, 'frame'])}, "
+            f"acceleration={valid_acceleration.loc[row_index]:.9f} rad/s^2"
+        )
+
+    plt.figure()
+    plt.plot(df.loc[valid_acceleration.index, "frame"], valid_acceleration)
+    plt.axhline(
+        acceleration_limit,
+        color="red",
+        linestyle="--",
+        label="acceleration limit",
+    )
+    plt.axhline(-acceleration_limit, color="red", linestyle="--")
+    plt.title(f"{col} acceleration")
+    plt.xlabel("frame")
+    plt.ylabel("angular acceleration [rad/s^2]")
+    plt.grid(True)
+    plt.legend()
+    plt.savefig(f"{col}_acceleration.png")
+    plt.close()
+
+print("Saved all wrapped joint acceleration plots as PNG files.")
+
 joint_angle_min = -3.0
 joint_angle_max = 3.0
 limit_violation_found = False
