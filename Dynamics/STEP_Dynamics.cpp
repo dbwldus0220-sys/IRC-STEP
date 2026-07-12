@@ -1878,6 +1878,19 @@ step_n = a;
 sim_n = walktime_n * step_n;
 }
 
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+namespace {
+double debug_RL_raw_fk_pos_err = 0.0;
+double debug_LL_raw_fk_pos_err = 0.0;
+double debug_RL_raw_fk_ori_err = 0.0;
+double debug_LL_raw_fk_ori_err = 0.0;
+double debug_RL_limited_fk_pos_err = 0.0;
+double debug_LL_limited_fk_pos_err = 0.0;
+double debug_RL_limited_fk_ori_err = 0.0;
+double debug_LL_limited_fk_ori_err = 0.0;
+}
+#endif
+
 void IK_Function::BRP_Simulation(const MatrixXd& RFx, const MatrixXd& RFy, const MatrixXd& RFz,
                                  const MatrixXd& LFx, const MatrixXd& LFy, const MatrixXd& LFz,
                                  int Index_CNT)
@@ -1939,8 +1952,51 @@ link << L0, L1, L2, L3, L4, L5, L6;
         LL_th_limited_vec(joint_index) = LL_th_vec(joint_index) + ll_delta;
     }
 
+    Eigen::VectorXd RL_raw_PR(6), LL_raw_PR(6);
+    Eigen::VectorXd RL_limited_PR(6), LL_limited_PR(6);
+    BRP_Kinematics::BRP_RL_FK(RL_th_raw_vec, link, RL_raw_PR);
+    BRP_Kinematics::BRP_LL_FK(LL_th_raw_vec, link, LL_raw_PR);
+
+    const auto orientation_error_norm = [](
+        const Eigen::VectorXd& target,
+        const Eigen::VectorXd& actual
+    ) {
+        double squared_error = 0.0;
+        for (int orientation_index = 3; orientation_index < 6;
+             ++orientation_index) {
+            const double angle_difference =
+                target(orientation_index) - actual(orientation_index);
+            const double wrapped_difference = std::atan2(
+                std::sin(angle_difference),
+                std::cos(angle_difference)
+            );
+            squared_error += wrapped_difference * wrapped_difference;
+        }
+        return std::sqrt(squared_error);
+    };
+
+    debug_RL_raw_fk_pos_err =
+        (Ref_RL_PR_vec.head(3) - RL_raw_PR.head(3)).norm();
+    debug_LL_raw_fk_pos_err =
+        (Ref_LL_PR_vec.head(3) - LL_raw_PR.head(3)).norm();
+    debug_RL_raw_fk_ori_err =
+        orientation_error_norm(Ref_RL_PR_vec, RL_raw_PR);
+    debug_LL_raw_fk_ori_err =
+        orientation_error_norm(Ref_LL_PR_vec, LL_raw_PR);
+
     std::memcpy(RL_th, RL_th_limited_vec.data(), 6 * sizeof(double));
     std::memcpy(LL_th, LL_th_limited_vec.data(), 6 * sizeof(double));
+
+    BRP_Kinematics::BRP_RL_FK(RL_th_vec, link, RL_limited_PR);
+    BRP_Kinematics::BRP_LL_FK(LL_th_vec, link, LL_limited_PR);
+    debug_RL_limited_fk_pos_err =
+        (Ref_RL_PR_vec.head(3) - RL_limited_PR.head(3)).norm();
+    debug_LL_limited_fk_pos_err =
+        (Ref_LL_PR_vec.head(3) - LL_limited_PR.head(3)).norm();
+    debug_RL_limited_fk_ori_err =
+        orientation_error_norm(Ref_RL_PR_vec, RL_limited_PR);
+    debug_LL_limited_fk_ori_err =
+        orientation_error_norm(Ref_LL_PR_vec, LL_limited_PR);
 #else
     std::memcpy(RL_th, RL_th_raw_vec.data(), 6 * sizeof(double));
     std::memcpy(LL_th, LL_th_raw_vec.data(), 6 * sizeof(double));
@@ -4070,6 +4126,12 @@ void RunStepWalkDebugOnce() {
         << ",RL_max_abs_delta_theta,LL_max_abs_delta_theta"
         << ",RL_delta_theta_1,RL_delta_theta_5"
         << ",LL_delta_theta_1,LL_delta_theta_5"
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+        << ",RL_raw_fk_pos_err,LL_raw_fk_pos_err"
+        << ",RL_raw_fk_ori_err,LL_raw_fk_ori_err"
+        << ",RL_limited_fk_pos_err,LL_limited_fk_pos_err"
+        << ",RL_limited_fk_ori_err,LL_limited_fk_ori_err"
+#endif
         // Final IK result change from the preceding simulation frame.
         << ",RL_frame_delta_0,RL_frame_delta_1,RL_frame_delta_2"
         << ",RL_frame_delta_3,RL_frame_delta_4,RL_frame_delta_5"
@@ -4307,6 +4369,16 @@ void RunStepWalkDebugOnce() {
             << ',' << BRP_Kinematics::last_RL_delta_theta_5
             << ',' << BRP_Kinematics::last_LL_delta_theta_1
             << ',' << BRP_Kinematics::last_LL_delta_theta_5;
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+        csv << ',' << debug_RL_raw_fk_pos_err
+            << ',' << debug_LL_raw_fk_pos_err
+            << ',' << debug_RL_raw_fk_ori_err
+            << ',' << debug_LL_raw_fk_ori_err
+            << ',' << debug_RL_limited_fk_pos_err
+            << ',' << debug_LL_limited_fk_pos_err
+            << ',' << debug_RL_limited_fk_ori_err
+            << ',' << debug_LL_limited_fk_ori_err;
+#endif
         for (double delta : rl_frame_delta) {
             csv << ',' << delta;
         }
