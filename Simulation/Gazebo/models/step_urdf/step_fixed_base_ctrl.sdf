@@ -1320,5 +1320,41 @@
       <topic>/step/right_hip_roll_joint/cmd_pos</topic>
     </plugin>
 
+  
+    <!-- Debug controller: RL5 / motor 21 -->
+    <plugin
+      filename="gz-sim-joint-position-controller-system"
+      name="gz::sim::systems::JointPositionController">
+      <joint_name>right_ankle_roll_joint</joint_name>
+      <p_gain>20</p_gain>
+      <i_gain>0</i_gain>
+      <d_gain>1</d_gain>
+      <topic>/step/right_ankle_roll_joint/cmd_pos</topic>
+    </plugin>
+
+
+    <!-- Debug controller: LL1 / motor 14 -->
+    <plugin
+      filename="gz-sim-joint-position-controller-system"
+      name="gz::sim::systems::JointPositionController">
+      <joint_name>left_hip_roll_joint</joint_name>
+      <p_gain>20</p_gain>
+      <i_gain>0</i_gain>
+      <d_gain>1</d_gain>
+      <topic>/step/left_hip_roll_joint/cmd_pos</topic>
+    </plugin>
+
+
+    <!-- Debug controller: LL5 / motor 22 -->
+    <plugin
+      filename="gz-sim-joint-position-controller-system"
+      name="gz::sim::systems::JointPositionController">
+      <joint_name>left_ankle_roll_joint</joint_name>
+      <p_gain>20</p_gain>
+      <i_gain>0</i_gain>
+      <d_gain>1</d_gain>
+      <topic>/step/left_ankle_roll_joint/cmd_pos</topic>
+    </plugin>
+
   </model>
 </sdf>
