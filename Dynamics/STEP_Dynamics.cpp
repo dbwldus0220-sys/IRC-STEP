@@ -1908,13 +1908,43 @@ Eigen::Map<Eigen::VectorXd> RL_th_vec(RL_th, 6);
 Eigen::VectorXd link(7);
 link << L0, L1, L2, L3, L4, L5, L6;
  
-    Eigen::VectorXd RL_th_IK_vec(6), LL_th_IK_vec(6);
+    Eigen::VectorXd RL_th_raw_vec(6), LL_th_raw_vec(6);
 
-BRP_Kinematics::BRP_RL_IK(Ref_RL_PR_vec, RL_th_vec, link, RL_th_IK_vec);
-    BRP_Kinematics::BRP_LL_IK(Ref_LL_PR_vec, LL_th_vec, link, LL_th_IK_vec);
+    BRP_Kinematics::BRP_RL_IK(Ref_RL_PR_vec, RL_th_vec, link, RL_th_raw_vec);
+    BRP_Kinematics::BRP_LL_IK(Ref_LL_PR_vec, LL_th_vec, link, LL_th_raw_vec);
 
-std::memcpy(RL_th, RL_th_IK_vec.data(), 6 * sizeof(double));
-    std::memcpy(LL_th, LL_th_IK_vec.data(), 6 * sizeof(double));
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#ifdef STEP_DEBUG_IK_POST_LIMIT_VALUE
+    constexpr double ik_post_continuity_limit =
+        static_cast<double>(STEP_DEBUG_IK_POST_LIMIT_VALUE);
+#else
+    constexpr double ik_post_continuity_limit = 0.12;
+#endif
+    constexpr int roll_joint_indices[] = {1, 5};
+    Eigen::VectorXd RL_th_limited_vec = RL_th_raw_vec;
+    Eigen::VectorXd LL_th_limited_vec = LL_th_raw_vec;
+
+    for (int joint_index : roll_joint_indices) {
+        const double rl_delta = std::clamp(
+            RL_th_raw_vec(joint_index) - RL_th_vec(joint_index),
+            -ik_post_continuity_limit,
+            ik_post_continuity_limit
+        );
+        const double ll_delta = std::clamp(
+            LL_th_raw_vec(joint_index) - LL_th_vec(joint_index),
+            -ik_post_continuity_limit,
+            ik_post_continuity_limit
+        );
+        RL_th_limited_vec(joint_index) = RL_th_vec(joint_index) + rl_delta;
+        LL_th_limited_vec(joint_index) = LL_th_vec(joint_index) + ll_delta;
+    }
+
+    std::memcpy(RL_th, RL_th_limited_vec.data(), 6 * sizeof(double));
+    std::memcpy(LL_th, LL_th_limited_vec.data(), 6 * sizeof(double));
+#else
+    std::memcpy(RL_th, RL_th_raw_vec.data(), 6 * sizeof(double));
+    std::memcpy(LL_th, LL_th_raw_vec.data(), 6 * sizeof(double));
+#endif
 
 }
 
@@ -4007,7 +4037,10 @@ void RunStepWalkDebugOnce() {
                   << " to stay within foot reference matrix columns." << std::endl;
     }
 
-#ifdef STEP_DEBUG_ROLL_RATE_LIMIT
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_ik_post_limit012.csv";
+#elif defined(STEP_DEBUG_ROLL_RATE_LIMIT)
     constexpr const char* debug_csv_filename =
         "walk_forward_debug_slow_rate005.csv";
 #else
