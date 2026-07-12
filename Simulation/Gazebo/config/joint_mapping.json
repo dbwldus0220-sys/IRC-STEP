@@ -1,0 +1,62 @@
+{
+  "RL0_wrap": {
+    "meaning": "RHY",
+    "motor_id": 10,
+    "urdf_joint": "right_hip_yaw_joint"
+  },
+  "RL1_wrap": {
+    "meaning": "RHRx",
+    "motor_id": 13,
+    "urdf_joint": "right_hip_roll_joint"
+  },
+  "RL2_wrap": {
+    "meaning": "RHP",
+    "motor_id": 15,
+    "urdf_joint": "right_hip_pitch_joint"
+  },
+  "RL3_wrap": {
+    "meaning": "RKN",
+    "motor_id": 17,
+    "urdf_joint": "right_knee_pitch_joint"
+  },
+  "RL4_wrap": {
+    "meaning": "RAP",
+    "motor_id": 19,
+    "urdf_joint": "right_ankle_pitch_joint"
+  },
+  "RL5_wrap": {
+    "meaning": "RAR",
+    "motor_id": 21,
+    "urdf_joint": "right_ankle_roll_joint"
+  },
+  "LL0_wrap": {
+    "meaning": "LHY",
+    "motor_id": 12,
+    "urdf_joint": "left_hip_yaw_joint"
+  },
+  "LL1_wrap": {
+    "meaning": "LHR",
+    "motor_id": 14,
+    "urdf_joint": "left_hip_roll_joint"
+  },
+  "LL2_wrap": {
+    "meaning": "LHP",
+    "motor_id": 16,
+    "urdf_joint": "left_hip_pitch_joint"
+  },
+  "LL3_wrap": {
+    "meaning": "LKN",
+    "motor_id": 18,
+    "urdf_joint": "left_knee_pitch_joint"
+  },
+  "LL4_wrap": {
+    "meaning": "LAP",
+    "motor_id": 20,
+    "urdf_joint": "left_ankle_pitch_joint"
+  },
+  "LL5_wrap": {
+    "meaning": "LAR",
+    "motor_id": 22,
+    "urdf_joint": "left_ankle_roll_joint"
+  }
+}
