@@ -4,3 +4,5 @@ Dynamics/step_debug
 Dynamics/*backup*.cpp
 Dynamics/STEP_Dynamcis.cpp
 Dynamics/single_motor_test
+Dynamics/step_debug_original
+Dynamics/step_debug_rate005
