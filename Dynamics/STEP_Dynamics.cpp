@@ -1,5 +1,6 @@
 #include "BRP_Kinematics.hpp"
 #include "NewPattern2.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -4006,12 +4007,19 @@ void RunStepWalkDebugOnce() {
                   << " to stay within foot reference matrix columns." << std::endl;
     }
 
-    std::ofstream csv("walk_forward_debug_slow.csv");
+#ifdef STEP_DEBUG_ROLL_RATE_LIMIT
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_rate005.csv";
+#else
+    constexpr const char* debug_csv_filename = "walk_forward_debug_slow.csv";
+#endif
+    std::ofstream csv(debug_csv_filename);
     if (!csv.is_open()) {
         std::cerr << "[STEP DEBUG][SLOW TEST][ERROR] Failed to open "
-                     "walk_forward_debug_slow.csv." << std::endl;
+                  << debug_csv_filename << '.' << std::endl;
         return;
     }
+    csv << std::setprecision(17);
     csv << "frame"
         << ",RL0_raw,RL1_raw,RL2_raw,RL3_raw,RL4_raw,RL5_raw"
         << ",LL0_raw,LL1_raw,LL2_raw,LL3_raw,LL4_raw,LL5_raw"
@@ -4151,6 +4159,14 @@ void RunStepWalkDebugOnce() {
     double previous_ll_th[6] = {};
     bool previous_frame_available = false;
 
+#ifdef STEP_DEBUG_ROLL_RATE_LIMIT
+    constexpr double roll_rate_limit = 0.05;
+    constexpr int roll_joint_indices[] = {1, 5};
+    double previous_limited_rl_th[6] = {};
+    double previous_limited_ll_th[6] = {};
+    bool roll_rate_limit_initialized = false;
+#endif
+
     for (int frame = 0; frame < debug_frame_count; ++frame) {
         ik.BRP_Simulation(ref_rl_x,
                           ref_rl_y,
@@ -4159,6 +4175,41 @@ void RunStepWalkDebugOnce() {
                           ref_ll_y,
                           ref_ll_z,
                           frame);
+
+#ifdef STEP_DEBUG_ROLL_RATE_LIMIT
+        double raw_rl_th[6] = {};
+        double raw_ll_th[6] = {};
+        std::copy(std::begin(ik.RL_th), std::end(ik.RL_th), raw_rl_th);
+        std::copy(std::begin(ik.LL_th), std::end(ik.LL_th), raw_ll_th);
+
+        if (!roll_rate_limit_initialized) {
+            for (int joint_index : roll_joint_indices) {
+                previous_limited_rl_th[joint_index] = raw_rl_th[joint_index];
+                previous_limited_ll_th[joint_index] = raw_ll_th[joint_index];
+            }
+            roll_rate_limit_initialized = true;
+        } else {
+            for (int joint_index : roll_joint_indices) {
+                const double rl_delta = std::clamp(
+                    raw_rl_th[joint_index] - previous_limited_rl_th[joint_index],
+                    -roll_rate_limit,
+                    roll_rate_limit
+                );
+                const double ll_delta = std::clamp(
+                    raw_ll_th[joint_index] - previous_limited_ll_th[joint_index],
+                    -roll_rate_limit,
+                    roll_rate_limit
+                );
+                previous_limited_rl_th[joint_index] += rl_delta;
+                previous_limited_ll_th[joint_index] += ll_delta;
+            }
+        }
+
+        for (int joint_index : roll_joint_indices) {
+            ik.RL_th[joint_index] = previous_limited_rl_th[joint_index];
+            ik.LL_th[joint_index] = previous_limited_ll_th[joint_index];
+        }
+#endif
 
         double rl_frame_delta[6] = {};
         double ll_frame_delta[6] = {};
@@ -4240,16 +4291,25 @@ void RunStepWalkDebugOnce() {
         previous_frame_available = true;
 
         if (frame == 0) {
+#ifdef STEP_DEBUG_ROLL_RATE_LIMIT
+            printJointAngles("Frame 0 raw RL_th (rad)", raw_rl_th);
+            printWrappedJointAngles("Frame 0 wrapped raw RL_th (rad)", raw_rl_th);
+            printJointAngles("Frame 0 raw LL_th (rad)", raw_ll_th);
+            printWrappedJointAngles("Frame 0 wrapped raw LL_th (rad)", raw_ll_th);
+            printJointAngles("Frame 0 rate-limited RL_th (rad)", ik.RL_th);
+            printJointAngles("Frame 0 rate-limited LL_th (rad)", ik.LL_th);
+#else
             printJointAngles("Frame 0 raw RL_th (rad)", ik.RL_th);
             printWrappedJointAngles("Frame 0 wrapped RL_th (rad)", ik.RL_th);
             printJointAngles("Frame 0 raw LL_th (rad)", ik.LL_th);
             printWrappedJointAngles("Frame 0 wrapped LL_th (rad)", ik.LL_th);
+#endif
         }
         checkAngles(frame, 0, ik.RL_th, right_joint_names);
         checkAngles(frame, 1, ik.LL_th, left_joint_names);
     }
     csv.close();
-    std::cout << "[STEP DEBUG][SLOW TEST] Saved walk_forward_debug_slow.csv ("
+    std::cout << "[STEP DEBUG][SLOW TEST] Saved " << debug_csv_filename << " ("
               << debug_frame_count << " frames)." << std::endl;
 
     if (!invalid_found) {
