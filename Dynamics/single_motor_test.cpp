@@ -10,6 +10,14 @@
 #include <string>
 #include <thread>
 
+#ifndef TEST_ID
+#define TEST_ID 17
+#endif
+
+#ifndef MOVE_TICK
+#define MOVE_TICK 10
+#endif
+
 class PortCloseGuard
 {
 public:
@@ -32,8 +40,8 @@ private:
 
 int main()
 {
-    const uint8_t TEST_ID = 17;    // 17: RKN, 18: LKN
-    const int32_t MOVE_TICK = 10;
+    constexpr uint8_t test_id = static_cast<uint8_t>(TEST_ID);  // 17: RKN, 18: LKN
+    constexpr int32_t move_tick = static_cast<int32_t>(MOVE_TICK);
     const int WAIT_MS = 1000;
     const int32_t MIN_POSITION = 0;
     const int32_t MAX_POSITION = 4095;
@@ -43,7 +51,7 @@ int main()
         return 1;
     }
 
-    if (std::abs(MOVE_TICK) > 30) {
+    if (std::abs(static_cast<int64_t>(MOVE_TICK)) > 30) {
         std::cerr << "[ERROR] |MOVE_TICK| must not exceed 30." << std::endl;
         return 1;
     }
@@ -71,7 +79,7 @@ int main()
                 uint32_t present_position = 0;
                 int dxl_comm_result = packetHandler->read4ByteTxRx(
                     portHandler,
-                    TEST_ID,
+                    test_id,
                     DxlReg_PresentPosition,
                     &present_position,
                     &dxl_error
@@ -82,16 +90,16 @@ int main()
                 } else {
                     start_position = static_cast<int32_t>(present_position);
                     start_position_available = true;
-                    const int32_t target_position = start_position + MOVE_TICK;
+                    int32_t target_position = start_position + move_tick;
 
                     if (target_position < MIN_POSITION || target_position > MAX_POSITION) {
                         std::cerr << "[ERROR] Target position is outside the valid range [0, 4095]."
                                   << std::endl;
                     } else {
-                        std::cout << "[INFO] TEST_ID         : " << static_cast<int>(TEST_ID) << std::endl;
+                        std::cout << "[INFO] TEST_ID         : " << static_cast<int>(test_id) << std::endl;
                         std::cout << "[INFO] start_position  : " << start_position << std::endl;
                         std::cout << "[INFO] target_position : " << target_position << std::endl;
-                        std::cout << "[INFO] MOVE_TICK       : " << MOVE_TICK << std::endl;
+                        std::cout << "[INFO] MOVE_TICK       : " << move_tick << std::endl;
 
                         std::string confirmation;
                         std::cout << "Type YES to continue" << std::endl;
@@ -110,7 +118,7 @@ int main()
                                 torque_enable_attempted = true;
                                 dxl_comm_result = packetHandler->write1ByteTxRx(
                                     portHandler,
-                                    TEST_ID,
+                                    test_id,
                                     DxlReg_TorqueEnable,
                                     1,
                                     &dxl_error
@@ -120,19 +128,55 @@ int main()
                                     std::cerr << "[ERROR] Failed to enable torque." << std::endl;
                                 } else {
                                     dxl_error = 0;
-                                    dxl_comm_result = packetHandler->write4ByteTxRx(
+                                    present_position = 0;
+                                    start_position_available = false;
+                                    dxl_comm_result = packetHandler->read4ByteTxRx(
                                         portHandler,
-                                        TEST_ID,
-                                        DxlReg_GoalPosition,
-                                        static_cast<uint32_t>(target_position),
+                                        test_id,
+                                        DxlReg_PresentPosition,
+                                        &present_position,
                                         &dxl_error
                                     );
 
                                     if (dxl_comm_result != COMM_SUCCESS || dxl_error != 0) {
-                                        std::cerr << "[ERROR] Failed to write target position." << std::endl;
+                                        std::cerr << "[ERROR] Failed to re-read present position "
+                                                     "after enabling torque." << std::endl;
                                     } else {
-                                        std::this_thread::sleep_for(std::chrono::milliseconds(WAIT_MS));
-                                        exit_code = 0;
+                                        start_position = static_cast<int32_t>(present_position);
+                                        start_position_available = true;
+                                        target_position = start_position + move_tick;
+
+                                        std::cout << "[INFO] start_position after torque enable  : "
+                                                  << start_position << std::endl;
+                                        std::cout << "[INFO] target_position after recalculation: "
+                                                  << target_position << std::endl;
+
+                                        if (target_position < MIN_POSITION
+                                            || target_position > MAX_POSITION) {
+                                            std::cerr << "[ERROR] Recalculated target position is "
+                                                         "outside the valid range [0, 4095]."
+                                                      << std::endl;
+                                        } else {
+                                            dxl_error = 0;
+                                            dxl_comm_result = packetHandler->write4ByteTxRx(
+                                                portHandler,
+                                                test_id,
+                                                DxlReg_GoalPosition,
+                                                static_cast<uint32_t>(target_position),
+                                                &dxl_error
+                                            );
+
+                                            if (dxl_comm_result != COMM_SUCCESS
+                                                || dxl_error != 0) {
+                                                std::cerr << "[ERROR] Failed to write target position."
+                                                          << std::endl;
+                                            } else {
+                                                std::this_thread::sleep_for(
+                                                    std::chrono::milliseconds(WAIT_MS)
+                                                );
+                                                exit_code = 0;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -152,7 +196,7 @@ int main()
             uint8_t dxl_error = 0;
             const int result = packetHandler->write4ByteTxRx(
                 portHandler,
-                TEST_ID,
+                test_id,
                 DxlReg_GoalPosition,
                 static_cast<uint32_t>(start_position),
                 &dxl_error
@@ -170,7 +214,7 @@ int main()
         uint8_t dxl_error = 0;
         const int result = packetHandler->write1ByteTxRx(
             portHandler,
-            TEST_ID,
+            test_id,
             DxlReg_TorqueEnable,
             0,
             &dxl_error
