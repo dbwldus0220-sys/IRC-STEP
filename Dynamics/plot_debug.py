@@ -657,6 +657,219 @@ for result in roll_rate_limit_sweep_results:
         f"{result['max_abs_angle_difference']:.9f}"
     )
 
+roll_lowpass_alphas = [0.10, 0.20, 0.30, 0.50]
+roll_lowpass_sweep_results = []
+roll_lowpass_alpha020_data = {"frame": df["frame"]}
+
+for alpha in roll_lowpass_alphas:
+    max_abs_velocity = 0.0
+    max_abs_acceleration = 0.0
+    max_abs_motor_delta = 0.0
+    max_abs_angle_difference = 0.0
+
+    for joint in roll_rate_limit_joints:
+        original_angles = df[joint]
+        filtered_angles = []
+
+        if not original_angles.empty:
+            filtered_previous = original_angles.iloc[0]
+            filtered_angles.append(filtered_previous)
+            for original_current in original_angles.iloc[1:]:
+                filtered_previous = (
+                    alpha * original_current
+                    + (1.0 - alpha) * filtered_previous
+                )
+                filtered_angles.append(filtered_previous)
+
+        filtered_angle_series = pd.Series(
+            filtered_angles,
+            index=original_angles.index,
+        )
+        filtered_velocity = filtered_angle_series.diff() / del_t
+        filtered_acceleration = filtered_velocity.diff() / del_t
+
+        config = joint_motor_map[joint]
+        motor_position_col = f"Motor{config['motor_id']}_pos"
+        filtered_motor_positions = filtered_angle_series.apply(
+            lambda angle, joint_name=joint, joint_config=config: (
+                angle_rad_to_position(angle, joint_name, joint_config)
+            )
+        )
+        filtered_motor_delta = filtered_motor_positions.diff()
+
+        max_abs_velocity = max(
+            max_abs_velocity,
+            filtered_velocity.abs().max(),
+        )
+        max_abs_acceleration = max(
+            max_abs_acceleration,
+            filtered_acceleration.abs().max(),
+        )
+        max_abs_motor_delta = max(
+            max_abs_motor_delta,
+            filtered_motor_delta.abs().max(),
+        )
+        max_abs_angle_difference = max(
+            max_abs_angle_difference,
+            (original_angles - filtered_angle_series).abs().max(),
+        )
+
+        if alpha == 0.20:
+            filtered_col = f"{joint}_lowpass_alpha020"
+            roll_lowpass_alpha020_data[filtered_col] = filtered_angle_series
+            roll_lowpass_alpha020_data[f"{filtered_col}_velocity"] = (
+                filtered_velocity
+            )
+            roll_lowpass_alpha020_data[f"{filtered_col}_acceleration"] = (
+                filtered_acceleration
+            )
+            roll_lowpass_alpha020_data[motor_position_col] = (
+                filtered_motor_positions
+            )
+            roll_lowpass_alpha020_data[
+                f"{motor_position_col}_delta_per_frame"
+            ] = filtered_motor_delta
+
+    roll_lowpass_sweep_results.append({
+        "alpha": alpha,
+        "max_abs_velocity": max_abs_velocity,
+        "max_abs_acceleration": max_abs_acceleration,
+        "max_abs_motor_delta": max_abs_motor_delta,
+        "max_abs_angle_difference": max_abs_angle_difference,
+    })
+
+print("\n[Roll Low Pass Filter Sweep]")
+print(
+    "alpha, max_abs_roll_joint_velocity, "
+    "max_abs_roll_joint_acceleration, "
+    "max_abs_roll_motor_delta_tick_per_frame, "
+    "max_abs_original_filtered_angle_difference"
+)
+for result in roll_lowpass_sweep_results:
+    print(
+        f"{result['alpha']:.2f}, "
+        f"{result['max_abs_velocity']:.9f}, "
+        f"{result['max_abs_acceleration']:.9f}, "
+        f"{result['max_abs_motor_delta']:.9f}, "
+        f"{result['max_abs_angle_difference']:.9f}"
+    )
+
+roll_lowpass_alpha020_candidate_df = pd.DataFrame(roll_lowpass_alpha020_data)
+roll_lowpass_alpha020_output_file = (
+    "motor_command_candidate_roll_lowpass_alpha020.csv"
+)
+roll_lowpass_alpha020_candidate_df.to_csv(
+    roll_lowpass_alpha020_output_file,
+    index=False,
+)
+print(
+    f"Saved offline roll low-pass candidate CSV: "
+    f"{roll_lowpass_alpha020_output_file} (no motor commands are sent)."
+)
+
+roll_rate_lowpass_combinations = [
+    (0.05, 0.20),
+    (0.05, 0.30),
+    (0.08, 0.20),
+    (0.08, 0.30),
+]
+roll_rate_lowpass_sweep_results = []
+
+for rate_limit_candidate, alpha in roll_rate_lowpass_combinations:
+    max_abs_velocity = 0.0
+    max_abs_acceleration = 0.0
+    max_abs_motor_delta = 0.0
+    max_abs_angle_difference = 0.0
+
+    for joint in roll_rate_limit_joints:
+        original_angles = df[joint]
+        rate_limited_angles = []
+
+        if not original_angles.empty:
+            previous_rate_limited = original_angles.iloc[0]
+            rate_limited_angles.append(previous_rate_limited)
+            for original_current in original_angles.iloc[1:]:
+                rate_limited_delta = np.clip(
+                    original_current - previous_rate_limited,
+                    -rate_limit_candidate,
+                    rate_limit_candidate,
+                )
+                previous_rate_limited += rate_limited_delta
+                rate_limited_angles.append(previous_rate_limited)
+
+        rate_limited_series = pd.Series(
+            rate_limited_angles,
+            index=original_angles.index,
+        )
+        filtered_angles = []
+        if not rate_limited_series.empty:
+            filtered_previous = rate_limited_series.iloc[0]
+            filtered_angles.append(filtered_previous)
+            for rate_limited_current in rate_limited_series.iloc[1:]:
+                filtered_previous = (
+                    alpha * rate_limited_current
+                    + (1.0 - alpha) * filtered_previous
+                )
+                filtered_angles.append(filtered_previous)
+
+        candidate_angles = pd.Series(
+            filtered_angles,
+            index=original_angles.index,
+        )
+        candidate_velocity = candidate_angles.diff() / del_t
+        candidate_acceleration = candidate_velocity.diff() / del_t
+
+        config = joint_motor_map[joint]
+        candidate_motor_positions = candidate_angles.apply(
+            lambda angle, joint_name=joint, joint_config=config: (
+                angle_rad_to_position(angle, joint_name, joint_config)
+            )
+        )
+        candidate_motor_delta = candidate_motor_positions.diff()
+
+        max_abs_velocity = max(
+            max_abs_velocity,
+            candidate_velocity.abs().max(),
+        )
+        max_abs_acceleration = max(
+            max_abs_acceleration,
+            candidate_acceleration.abs().max(),
+        )
+        max_abs_motor_delta = max(
+            max_abs_motor_delta,
+            candidate_motor_delta.abs().max(),
+        )
+        max_abs_angle_difference = max(
+            max_abs_angle_difference,
+            (original_angles - candidate_angles).abs().max(),
+        )
+
+    roll_rate_lowpass_sweep_results.append({
+        "rate_limit": rate_limit_candidate,
+        "alpha": alpha,
+        "max_abs_velocity": max_abs_velocity,
+        "max_abs_acceleration": max_abs_acceleration,
+        "max_abs_motor_delta": max_abs_motor_delta,
+        "max_abs_angle_difference": max_abs_angle_difference,
+    })
+
+print("\n[Roll Rate Limit Plus Low Pass Sweep]")
+print(
+    "rate_limit_rad_per_frame, alpha, max_abs_roll_joint_velocity, "
+    "max_abs_roll_joint_acceleration, "
+    "max_abs_roll_motor_delta_tick_per_frame, "
+    "max_abs_original_candidate_angle_difference"
+)
+for result in roll_rate_lowpass_sweep_results:
+    print(
+        f"{result['rate_limit']:.3f}, "
+        f"{result['alpha']:.2f}, "
+        f"{result['max_abs_velocity']:.9f}, "
+        f"{result['max_abs_acceleration']:.9f}, "
+        f"{result['max_abs_motor_delta']:.9f}, "
+        f"{result['max_abs_angle_difference']:.9f}"
+    )
+
 original_ik_csv = Path("walk_forward_debug_slow_original.csv")
 damped_ik_csv = Path("walk_forward_debug_slow_damped.csv")
 
@@ -771,6 +984,127 @@ if original_ik_csv.exists() and damped_ik_csv.exists():
             print(f"{metric}, {original_value}, {damped_value}")
         else:
             print(f"{metric}, {original_value:.9e}, {damped_value:.9e}")
+
+# Offline comparison only. This guard does not modify the C++ IK result.
+continuity_limit = 0.05
+continuity_limited_data = {"frame": df["frame"]}
+original_max_abs_joint_velocity = 0.0
+candidate_max_abs_joint_velocity = 0.0
+original_max_abs_joint_acceleration = 0.0
+candidate_max_abs_joint_acceleration = 0.0
+original_max_abs_motor_delta = 0.0
+candidate_max_abs_motor_delta = 0.0
+max_abs_continuity_angle_difference = 0.0
+
+for joint in cols:
+    candidate_col = f"{joint}_continuity_limited"
+    original_angles = df[joint]
+    continuity_limited_angles = []
+
+    if not original_angles.empty:
+        previous_candidate = original_angles.iloc[0]
+        continuity_limited_angles.append(previous_candidate)
+        for original_current in original_angles.iloc[1:]:
+            candidate_delta = np.clip(
+                original_current - previous_candidate,
+                -continuity_limit,
+                continuity_limit,
+            )
+            previous_candidate += candidate_delta
+            continuity_limited_angles.append(previous_candidate)
+
+    candidate_angles = pd.Series(
+        continuity_limited_angles,
+        index=original_angles.index,
+    )
+    candidate_velocity = candidate_angles.diff() / del_t
+    candidate_acceleration = candidate_velocity.diff() / del_t
+    continuity_limited_data[candidate_col] = candidate_angles
+    continuity_limited_data[f"{candidate_col}_velocity"] = candidate_velocity
+    continuity_limited_data[f"{candidate_col}_acceleration"] = (
+        candidate_acceleration
+    )
+
+    original_velocity = joint_motion_data[joint]["velocity"]
+    original_acceleration = joint_motion_data[joint]["acceleration"]
+    original_max_abs_joint_velocity = max(
+        original_max_abs_joint_velocity,
+        original_velocity.abs().max(),
+    )
+    candidate_max_abs_joint_velocity = max(
+        candidate_max_abs_joint_velocity,
+        candidate_velocity.abs().max(),
+    )
+    original_max_abs_joint_acceleration = max(
+        original_max_abs_joint_acceleration,
+        original_acceleration.abs().max(),
+    )
+    candidate_max_abs_joint_acceleration = max(
+        candidate_max_abs_joint_acceleration,
+        candidate_acceleration.abs().max(),
+    )
+    max_abs_continuity_angle_difference = max(
+        max_abs_continuity_angle_difference,
+        (original_angles - candidate_angles).abs().max(),
+    )
+
+    config = joint_motor_map[joint]
+    motor_position_col = f"Motor{config['motor_id']}_pos"
+    candidate_motor_positions = candidate_angles.apply(
+        lambda angle, joint_name=joint, joint_config=config: (
+            angle_rad_to_position(angle, joint_name, joint_config)
+        )
+    )
+    candidate_motor_delta = candidate_motor_positions.diff()
+    continuity_limited_data[motor_position_col] = candidate_motor_positions
+    continuity_limited_data[f"{motor_position_col}_delta_per_frame"] = (
+        candidate_motor_delta
+    )
+
+    original_motor_delta = candidate_df[motor_position_col].diff()
+    original_max_abs_motor_delta = max(
+        original_max_abs_motor_delta,
+        original_motor_delta.abs().max(),
+    )
+    candidate_max_abs_motor_delta = max(
+        candidate_max_abs_motor_delta,
+        candidate_motor_delta.abs().max(),
+    )
+
+continuity_limited_candidate_df = pd.DataFrame(continuity_limited_data)
+continuity_limited_output_file = (
+    "motor_command_candidate_continuity_limited.csv"
+)
+continuity_limited_candidate_df.to_csv(
+    continuity_limited_output_file,
+    index=False,
+)
+
+print("\n[Offline IK Solution Continuity Candidate]")
+print(f"Temporary continuity limit: {continuity_limit:.3f} rad/frame")
+print("metric, original, continuity_candidate")
+print(
+    f"max_abs_joint_velocity, {original_max_abs_joint_velocity:.9f}, "
+    f"{candidate_max_abs_joint_velocity:.9f}"
+)
+print(
+    f"max_abs_joint_acceleration, "
+    f"{original_max_abs_joint_acceleration:.9f}, "
+    f"{candidate_max_abs_joint_acceleration:.9f}"
+)
+print(
+    f"max_abs_motor_delta_tick_per_frame, "
+    f"{original_max_abs_motor_delta:.9f}, "
+    f"{candidate_max_abs_motor_delta:.9f}"
+)
+print(
+    f"max_abs_original_candidate_angle_difference, 0.000000000, "
+    f"{max_abs_continuity_angle_difference:.9f}"
+)
+print(
+    f"Saved offline continuity-limited candidate CSV: "
+    f"{continuity_limited_output_file} (no motor commands are sent)."
+)
 
 spike_debug_joints = ["RL1_wrap", "RL5_wrap", "LL1_wrap", "LL5_wrap"]
 spike_debug_motor_columns = [
