@@ -576,6 +576,53 @@ print(
     f"{roll_limited_candidate_output_file} (no motor commands are sent)."
 )
 
+# Save the selected 0.05 rad/frame roll safety guard for Gazebo replay and
+# offline comparison. No commands are sent from this script.
+script_directory = Path(__file__).resolve().parent
+roll_replay_final_data = {"frame": df["frame"]}
+roll_rate005_analysis_data = {"frame": df["frame"]}
+roll_rate005_summary = []
+
+for joint in roll_rate_limit_joints:
+    original_angles = df[joint]
+    candidate_angles = roll_limited_candidate_df[f"{joint}_limited"]
+    difference = candidate_angles - original_angles
+
+    roll_replay_final_data[joint] = candidate_angles
+    roll_rate005_analysis_data[f"{joint}_original"] = original_angles
+    roll_rate005_analysis_data[f"{joint}_rate005"] = candidate_angles
+    roll_rate005_analysis_data[f"{joint}_diff"] = difference
+    roll_rate005_summary.append({
+        "joint": joint,
+        "max_abs_diff": difference.abs().max(),
+        "max_abs_delta_per_frame": candidate_angles.diff().abs().max(),
+    })
+
+roll_replay_final_df = pd.DataFrame(roll_replay_final_data)
+roll_rate005_analysis_df = pd.DataFrame(roll_rate005_analysis_data)
+roll_replay_final_output_file = (
+    script_directory / "roll_replay_candidate_rate005_final.csv"
+)
+roll_rate005_analysis_output_file = (
+    script_directory / "roll_rate005_final_analysis.csv"
+)
+roll_replay_final_df.to_csv(roll_replay_final_output_file, index=False)
+roll_rate005_analysis_df.to_csv(roll_rate005_analysis_output_file, index=False)
+
+print("\n[Final Gazebo Roll Rate Limit Candidate]")
+for result in roll_rate005_summary:
+    print(
+        f"{result['joint']} max_abs_diff: "
+        f"{result['max_abs_diff']:.9f} rad"
+    )
+    print(
+        f"{result['joint']} max_abs_delta_per_frame for candidate: "
+        f"{result['max_abs_delta_per_frame']:.9f} rad/frame"
+    )
+print("selected safety guard: roll rate limit 0.05 rad/frame")
+print(f"Saved final Gazebo replay CSV: {roll_replay_final_output_file}")
+print(f"Saved final roll analysis CSV: {roll_rate005_analysis_output_file}")
+
 roll_rate_limit_candidates = [0.03, 0.05, 0.08, 0.10]
 roll_rate_limit_sweep_results = []
 
