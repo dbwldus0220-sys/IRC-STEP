@@ -91,7 +91,31 @@ Before walking:
 
 ## 6. Single motor test first
 
-Use `single_motor_test.cpp`.
+## Single motor test compile commands
+
+Compile default motor ID 17:
+
+```bash
+cd ~/IRC/IRC-STEP/Dynamics
+g++ -std=c++17 single_motor_test.cpp -o single_motor_test \
+  -L/usr/local/lib -ldxl_x64_cpp -pthread
+
+
+```bash
+cd ~/IRC/IRC-STEP/Dynamics
+g++ -std=c++17 single_motor_test.cpp -o single_motor_test_id18 \
+  -DTEST_ID=18 \
+  -DMOVE_TICK=10 \
+  -L/usr/local/lib -ldxl_x64_cpp -pthread
+
+---  
+
+Do not execute before:
+
+- robot is mechanically supported
+- emergency stop is ready
+- power supply is checked
+- torque off method is confirmed
 
 Rules:
 - Test only one motor.
