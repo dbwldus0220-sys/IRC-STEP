@@ -359,6 +359,24 @@ public:
 
 	void Change_Angle_Compensation(double RL_Support, double RL_Swing, double RL_Knee , double RL_Ankle, double LL_Support, double LL_Swing, double LL_Knee ,double LL_Ankle);
 	double RL_th[6] = { 0.,0.,-0.610865,1.22173,0.610865,0. }, LL_th[6] = { 0.,0.,-0.610865,1.22173,0.610865, 0.};
+#ifdef STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING
+	double debug_RL_zero_scale_branch[6] = {
+		0., 0., -0.610865, 1.22173, 0.610865, 0.
+	};
+	double debug_LL_zero_scale_branch[6] = {
+		0., 0., -0.610865, 1.22173, 0.610865, 0.
+	};
+#endif
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+	bool debug_generate_y_scale_zero_baseline = false;
+	bool debug_y_continuation_baseline_seed_available = false;
+	double debug_RL_y_continuation_baseline_seed[6] = {};
+	double debug_LL_y_continuation_baseline_seed[6] = {};
+#endif
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+	double debug_RL_previous_roll_velocity[2] = {};
+	double debug_LL_previous_roll_velocity[2] = {};
+#endif
 	void Change_Com_Height(double h);
     
 	double check_index;

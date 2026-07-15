@@ -62,8 +62,9 @@
     </model>
 
     <include>
-      <uri>model://step_urdf/step_fixed_base_ctrl.sdf</uri>
+      <uri>model://step_urdf/step_lateral_slide_ctrl.sdf</uri>
       <pose>0 0 0.6 0 0 0</pose>
     </include>
   </world>
 </sdf>
+

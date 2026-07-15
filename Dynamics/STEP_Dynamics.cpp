@@ -1,3 +1,272 @@
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+#ifndef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+#define STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+#endif
+#endif
+
+#ifdef STEP_DEBUG_PAIR_W1_LONG
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#error "STEP_DEBUG_PAIR_W1_LONG must be built without STEP_DEBUG_IK_POST_CONTINUITY_LIMIT"
+#endif
+#ifndef STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION
+#endif
+#ifndef STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_SIMULATION_MAIN
+#endif
+#ifndef STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_LONG_WALK
+#endif
+#define STEP_DEBUG_IK_CONTINUITY_REGULARIZATION
+#define STEP_DEBUG_IK_ROLL_PAIR_COUPLING
+#ifdef STEP_DEBUG_IK_CONTINUITY_WEIGHT
+#undef STEP_DEBUG_IK_CONTINUITY_WEIGHT
+#endif
+#define STEP_DEBUG_IK_CONTINUITY_WEIGHT 0.3
+#ifdef STEP_DEBUG_IK_ROLL_PAIR_WEIGHT
+#undef STEP_DEBUG_IK_ROLL_PAIR_WEIGHT
+#endif
+#define STEP_DEBUG_IK_ROLL_PAIR_WEIGHT 1.0
+#endif
+
+#ifdef STEP_DEBUG_ROLL_AMP_W05_LONG
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#error "STEP_DEBUG_ROLL_AMP_W05_LONG must be built without STEP_DEBUG_IK_POST_CONTINUITY_LIMIT"
+#endif
+#define STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION
+#ifdef STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT
+#undef STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT
+#endif
+#define STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT 0.5
+#endif
+
+#ifdef STEP_DEBUG_ROLL_AMP_PAIR_LONG
+#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#error "STEP_DEBUG_ROLL_AMP_PAIR_LONG must be built without STEP_DEBUG_IK_POST_CONTINUITY_LIMIT"
+#endif
+#define STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION
+#define STEP_DEBUG_IK_ROLL_PAIR_COUPLING
+#ifndef STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT
+#define STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT 0.5
+#endif
+#ifndef STEP_DEBUG_IK_ROLL_PAIR_WEIGHT
+#define STEP_DEBUG_IK_ROLL_PAIR_WEIGHT 1.0
+#endif
+#ifndef STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT_LABEL
+#define STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT_LABEL w05
+#endif
+#ifndef STEP_DEBUG_IK_ROLL_PAIR_WEIGHT_LABEL
+#define STEP_DEBUG_IK_ROLL_PAIR_WEIGHT_LABEL w10
+#endif
+#define STEP_DEBUG_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_STRINGIFY(value) STEP_DEBUG_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_CONVERGENCE_GUARD_LONG
+#if defined(STEP_DEBUG_IK_POST_CONTINUITY_LIMIT) \
+    || defined(STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_PAIR_COUPLING)
+#error "STEP_DEBUG_CONVERGENCE_GUARD_LONG must be built without post clamp, roll amplitude, or roll pair coupling"
+#endif
+#define STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_IK_CONVERGENCE_GUARD
+#endif
+
+#ifdef STEP_DEBUG_IK_DIAGNOSIS_LONG
+#if defined(STEP_DEBUG_IK_CONTINUITY_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_PAIR_COUPLING) \
+    || defined(STEP_DEBUG_IK_CONVERGENCE_GUARD)
+#error "STEP_DEBUG_IK_DIAGNOSIS_LONG must use the post_ik_012 baseline without solver candidates"
+#endif
+#define STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#ifdef STEP_DEBUG_IK_POST_LIMIT_VALUE
+#undef STEP_DEBUG_IK_POST_LIMIT_VALUE
+#endif
+#define STEP_DEBUG_IK_POST_LIMIT_VALUE 0.12
+#endif
+
+#ifdef STEP_DEBUG_IK_TARGET_Y_SCALE_LONG
+#if defined(STEP_DEBUG_IK_CONTINUITY_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_PAIR_COUPLING) \
+    || defined(STEP_DEBUG_IK_CONVERGENCE_GUARD)
+#error "STEP_DEBUG_IK_TARGET_Y_SCALE_LONG must use the post_ik_012 baseline without solver candidates"
+#endif
+#ifndef STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION
+#endif
+#ifndef STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_SIMULATION_MAIN
+#endif
+#ifndef STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_LONG_WALK
+#endif
+#ifndef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+#define STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#endif
+#ifndef STEP_DEBUG_IK_TARGET_Y_SCALE
+#define STEP_DEBUG_IK_TARGET_Y_SCALE 1.0
+#endif
+#ifndef STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL
+#define STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL 100
+#endif
+#ifndef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+#ifdef STEP_DEBUG_IK_POST_LIMIT_VALUE
+#undef STEP_DEBUG_IK_POST_LIMIT_VALUE
+#endif
+#define STEP_DEBUG_IK_POST_LIMIT_VALUE 0.12
+#endif
+#define STEP_DEBUG_Y_SCALE_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_Y_SCALE_STRINGIFY(value) \
+    STEP_DEBUG_Y_SCALE_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING
+#if defined(STEP_DEBUG_IK_POST_CONTINUITY_LIMIT) \
+    || defined(STEP_DEBUG_IK_CONTINUITY_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_PAIR_COUPLING) \
+    || defined(STEP_DEBUG_IK_CONVERGENCE_GUARD)
+#error "STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING must be built without post clamp or previous solver candidates"
+#endif
+#define STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_LONG_WALK
+#ifndef STEP_DEBUG_IK_TARGET_Y_SCALE
+#define STEP_DEBUG_IK_TARGET_Y_SCALE 0.05
+#endif
+#ifndef STEP_DEBUG_IK_SMALL_ROLL_WEIGHT
+#define STEP_DEBUG_IK_SMALL_ROLL_WEIGHT 0.02
+#endif
+#ifndef STEP_DEBUG_IK_BRANCH_WEIGHT
+#define STEP_DEBUG_IK_BRANCH_WEIGHT 1.0
+#endif
+#ifndef STEP_DEBUG_IK_BRANCH_POSE_ERROR_WEIGHT
+#define STEP_DEBUG_IK_BRANCH_POSE_ERROR_WEIGHT 1.0
+#endif
+#ifndef STEP_DEBUG_IK_BRANCH_WEIGHT_LABEL
+#define STEP_DEBUG_IK_BRANCH_WEIGHT_LABEL b10
+#endif
+#ifndef STEP_DEBUG_IK_SMALL_ROLL_WEIGHT_LABEL
+#define STEP_DEBUG_IK_SMALL_ROLL_WEIGHT_LABEL w02
+#endif
+#define STEP_DEBUG_BRANCH_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_BRANCH_STRINGIFY(value) \
+    STEP_DEBUG_BRANCH_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+#if defined(STEP_DEBUG_IK_POST_CONTINUITY_LIMIT) \
+    || defined(STEP_DEBUG_IK_CONTINUITY_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_AMPLITUDE_REGULARIZATION) \
+    || defined(STEP_DEBUG_IK_ROLL_PAIR_COUPLING) \
+    || defined(STEP_DEBUG_IK_CONVERGENCE_GUARD) \
+    || defined(STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING)
+#error "STEP_DEBUG_IK_Y_SCALE_CONTINUATION must be built without post clamp or previous solver candidates"
+#endif
+#ifndef STEP_DEBUG_SIMULATION
+#define STEP_DEBUG_SIMULATION
+#endif
+#ifndef STEP_DEBUG_SIMULATION_MAIN
+#define STEP_DEBUG_SIMULATION_MAIN
+#endif
+#ifndef STEP_DEBUG_LONG_WALK
+#define STEP_DEBUG_LONG_WALK
+#endif
+#ifndef STEP_DEBUG_IK_TARGET_Y_SCALE
+#define STEP_DEBUG_IK_TARGET_Y_SCALE 0.05
+#endif
+#ifndef STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+#define STEP_DEBUG_IK_Y_CONTINUATION_STEPS 5
+#endif
+#ifndef STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_1
+#define STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_1 201
+#endif
+#ifndef STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_2
+#define STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_2 1333
+#endif
+#if STEP_DEBUG_IK_Y_CONTINUATION_STEPS <= 0
+#error "STEP_DEBUG_IK_Y_CONTINUATION_STEPS must be greater than zero"
+#endif
+#define STEP_DEBUG_CONTINUATION_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_CONTINUATION_STRINGIFY(value) \
+    STEP_DEBUG_CONTINUATION_STRINGIFY_IMPL(value)
+#endif
+
+// Current best candidate from Gazebo fixed-base replay:
+//   target Y scale                         = 0.02
+//   baseline continuation                  = enabled
+//   roll branch jump guard threshold       = 0.05 rad/frame
+//   roll post low-pass alpha               = 0.50
+//   hip/knee/ankle pitch post low-pass alpha = 0.80
+// The roll post acceleration limiter is intentionally held back for now.
+// Keep these as compile-time experiment options; this note does not enable
+// or override any debug macro or parameter.
+
+#ifdef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+#ifndef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD
+#define STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD 0.3
+#endif
+#define STEP_DEBUG_JUMP_GUARD_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_JUMP_GUARD_STRINGIFY(value) \
+    STEP_DEBUG_JUMP_GUARD_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+#ifndef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+#error "STEP_DEBUG_IK_ROLL_POST_LOW_PASS requires STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT"
+#endif
+#ifndef STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA
+#define STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA 0.20
+#endif
+#define STEP_DEBUG_ROLL_LPF_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_ROLL_LPF_STRINGIFY(value) \
+    STEP_DEBUG_ROLL_LPF_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+#ifndef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+#error "STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS requires STEP_DEBUG_IK_ROLL_POST_LOW_PASS"
+#endif
+#ifndef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA
+#define STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA 0.70
+#endif
+#define STEP_DEBUG_PITCH_LPF_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_PITCH_LPF_STRINGIFY(value) \
+    STEP_DEBUG_PITCH_LPF_STRINGIFY_IMPL(value)
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+#ifndef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+#error "STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT requires STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS"
+#endif
+#ifndef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_VALUE
+#define STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_VALUE 0.02
+#endif
+#define STEP_DEBUG_ROLL_ACCEL_STRINGIFY_IMPL(value) #value
+#define STEP_DEBUG_ROLL_ACCEL_STRINGIFY(value) \
+    STEP_DEBUG_ROLL_ACCEL_STRINGIFY_IMPL(value)
+#endif
+
+#if defined(STEP_DEBUG_IK_DIAGNOSIS_LONG) \
+    || defined(STEP_DEBUG_IK_TARGET_Y_SCALE_LONG) \
+    || defined(STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING) \
+    || defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION)
+#define STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+#endif
+
 #include "BRP_Kinematics.hpp"
 #include "NewPattern2.hpp"
 #include <algorithm>
@@ -1849,6 +2118,11 @@ LL_th[3] = 70. * deg2rad;  // LKN
 LL_th[4] = -35. * deg2rad; // LAP
 LL_th[5] = 0. * deg2rad;   // LAR
 
+#ifdef STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING
+std::memcpy(debug_RL_zero_scale_branch, RL_th, 6 * sizeof(double));
+std::memcpy(debug_LL_zero_scale_branch, LL_th, 6 * sizeof(double));
+#endif
+
 Ref_RL_PR[0] = 40.;
 Ref_RL_PR[1] = -L0;
 Ref_RL_PR[2] = -L1 - L2 - L3 - L4 - L5 - L6 + 40.;
@@ -1891,6 +2165,133 @@ double debug_LL_limited_fk_ori_err = 0.0;
 }
 #endif
 
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+namespace {
+double debug_RL_target_pose[6] = {};
+double debug_LL_target_pose[6] = {};
+double debug_RL_raw_joint_output[6] = {};
+double debug_LL_raw_joint_output[6] = {};
+}
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+namespace {
+bool debug_RL_roll_jump_guard_used = false;
+bool debug_LL_roll_jump_guard_used = false;
+double debug_RL_roll_jump_delta_before = 0.0;
+double debug_LL_roll_jump_delta_before = 0.0;
+double debug_RL_post_guard_fk_pos_err = 0.0;
+double debug_LL_post_guard_fk_pos_err = 0.0;
+double debug_RL_post_guard_fk_ori_err = 0.0;
+double debug_LL_post_guard_fk_ori_err = 0.0;
+}
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+namespace {
+bool debug_RL_roll_lowpass_used = false;
+bool debug_LL_roll_lowpass_used = false;
+double debug_RL_roll_lowpass_delta_before = 0.0;
+double debug_LL_roll_lowpass_delta_before = 0.0;
+}
+#endif
+
+#ifdef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+namespace {
+bool debug_RL_pitch_chain_lowpass_used = false;
+bool debug_LL_pitch_chain_lowpass_used = false;
+double debug_RL_pitch_chain_delta_before = 0.0;
+double debug_LL_pitch_chain_delta_before = 0.0;
+}
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+namespace {
+bool debug_RL_roll_acc_limit_used = false;
+bool debug_LL_roll_acc_limit_used = false;
+double debug_RL_roll_acc_before = 0.0;
+double debug_LL_roll_acc_before = 0.0;
+}
+#endif
+
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+namespace {
+std::ofstream debug_y_continuation_substep_csv;
+bool debug_y_continuation_substep_csv_initialized = false;
+
+bool isYContinuationDebugFrame(int frame)
+{
+    constexpr int target_frames[] = {
+        STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_1,
+        STEP_DEBUG_IK_Y_CONTINUATION_TARGET_FRAME_2,
+    };
+    return std::find(
+        std::begin(target_frames),
+        std::end(target_frames),
+        frame
+    ) != std::end(target_frames);
+}
+
+void initializeYContinuationSubstepCsv()
+{
+    if (debug_y_continuation_substep_csv_initialized) {
+        return;
+    }
+    debug_y_continuation_substep_csv_initialized = true;
+    debug_y_continuation_substep_csv.open(
+        "walk_forward_debug_y_continuation_substeps.csv"
+    );
+    if (!debug_y_continuation_substep_csv.is_open()) {
+        std::cerr << "[STEP DEBUG][ERROR] Failed to open continuation "
+                     "substep CSV."
+                  << std::endl;
+        return;
+    }
+    debug_y_continuation_substep_csv << std::setprecision(17)
+        << "frame,leg,substep_index,sub_scale,target_y"
+        << ",q0,q1,q2,q3,q4,q5,q1_wrap,q5_wrap,roll_abs_sum"
+        << ",init_q1_wrap,init_q5_wrap"
+        << ",converged,iteration_count,final_ERR\n";
+}
+
+void writeYContinuationSubstep(
+    int frame,
+    const char* leg,
+    int substep_index,
+    double sub_scale,
+    double target_y,
+    const Eigen::VectorXd& initial_theta,
+    const Eigen::VectorXd& result_theta,
+    bool converged,
+    int iteration_count,
+    double final_error
+)
+{
+    if (!debug_y_continuation_substep_csv.is_open()) {
+        return;
+    }
+    const auto wrap_angle = [](double angle) {
+        return std::atan2(std::sin(angle), std::cos(angle));
+    };
+    const double q1_wrap = wrap_angle(result_theta(1));
+    const double q5_wrap = wrap_angle(result_theta(5));
+    debug_y_continuation_substep_csv
+        << frame << ',' << leg << ',' << substep_index
+        << ',' << sub_scale << ',' << target_y;
+    for (int joint_index = 0; joint_index < 6; ++joint_index) {
+        debug_y_continuation_substep_csv << ',' << result_theta(joint_index);
+    }
+    debug_y_continuation_substep_csv
+        << ',' << q1_wrap << ',' << q5_wrap
+        << ',' << std::abs(q1_wrap) + std::abs(q5_wrap)
+        << ',' << wrap_angle(initial_theta(1))
+        << ',' << wrap_angle(initial_theta(5))
+        << ',' << (converged ? 1 : 0)
+        << ',' << iteration_count << ',' << final_error << '\n';
+}
+}
+#endif
+
 void IK_Function::BRP_Simulation(const MatrixXd& RFx, const MatrixXd& RFy, const MatrixXd& RFz,
                                  const MatrixXd& LFx, const MatrixXd& LFy, const MatrixXd& LFz,
                                  int Index_CNT)
@@ -1913,6 +2314,22 @@ void IK_Function::BRP_Simulation(const MatrixXd& RFx, const MatrixXd& RFy, const
     Ref_LL_PR[4] = 0 * deg2rad;
     Ref_LL_PR[5] = 0 * deg2rad;
 
+#ifdef STEP_DEBUG_IK_TARGET_Y_SCALE
+    constexpr double target_y_scale =
+        static_cast<double>(STEP_DEBUG_IK_TARGET_Y_SCALE);
+    const double initial_RL_target_y = 1000.0 * RFy(0, 0);
+    const double initial_LL_target_y = 1000.0 * LFy(0, 0);
+    Ref_RL_PR[1] = initial_RL_target_y
+        + target_y_scale * (Ref_RL_PR[1] - initial_RL_target_y);
+    Ref_LL_PR[1] = initial_LL_target_y
+        + target_y_scale * (Ref_LL_PR[1] - initial_LL_target_y);
+#endif
+
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+    std::copy(std::begin(Ref_RL_PR), std::end(Ref_RL_PR), debug_RL_target_pose);
+    std::copy(std::begin(Ref_LL_PR), std::end(Ref_LL_PR), debug_LL_target_pose);
+#endif
+
 Eigen::Map<Eigen::VectorXd> RL_th_vec(RL_th, 6);
     Eigen::Map<Eigen::VectorXd> LL_th_vec(LL_th, 6);
     Eigen::Map<Eigen::VectorXd> Ref_RL_PR_vec(Ref_RL_PR, 6);
@@ -1923,8 +2340,549 @@ link << L0, L1, L2, L3, L4, L5, L6;
  
     Eigen::VectorXd RL_th_raw_vec(6), LL_th_raw_vec(6);
 
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION
+    initializeYContinuationSubstepCsv();
+    const bool log_continuation_substeps = isYContinuationDebugFrame(idx);
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+    if (debug_generate_y_scale_zero_baseline) {
+        Eigen::VectorXd RL_zero_target = Ref_RL_PR_vec;
+        Eigen::VectorXd LL_zero_target = Ref_LL_PR_vec;
+        RL_zero_target(1) = 1000.0 * RFy(0, 0);
+        LL_zero_target(1) = 1000.0 * LFy(0, 0);
+        Eigen::VectorXd RL_zero_raw(6), LL_zero_raw(6);
+        BRP_Kinematics::BRP_RL_IK(
+            RL_zero_target, RL_th_vec, link, RL_zero_raw
+        );
+        BRP_Kinematics::BRP_LL_IK(
+            LL_zero_target, LL_th_vec, link, LL_zero_raw
+        );
+        constexpr double baseline_roll_delta_limit = 0.12;
+        constexpr int roll_joint_indices[] = {1, 5};
+        for (int joint_index : roll_joint_indices) {
+            RL_zero_raw(joint_index) = RL_th_vec(joint_index) + std::clamp(
+                RL_zero_raw(joint_index) - RL_th_vec(joint_index),
+                -baseline_roll_delta_limit,
+                baseline_roll_delta_limit
+            );
+            LL_zero_raw(joint_index) = LL_th_vec(joint_index) + std::clamp(
+                LL_zero_raw(joint_index) - LL_th_vec(joint_index),
+                -baseline_roll_delta_limit,
+                baseline_roll_delta_limit
+            );
+        }
+        std::memcpy(RL_th, RL_zero_raw.data(), 6 * sizeof(double));
+        std::memcpy(LL_th, LL_zero_raw.data(), 6 * sizeof(double));
+        return;
+    }
+#endif
+    Eigen::VectorXd RL_continuation_seed = RL_th_vec;
+    Eigen::VectorXd LL_continuation_seed = LL_th_vec;
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+    if (debug_y_continuation_baseline_seed_available) {
+        RL_continuation_seed = Eigen::Map<Eigen::VectorXd>(
+            debug_RL_y_continuation_baseline_seed, 6
+        );
+        LL_continuation_seed = Eigen::Map<Eigen::VectorXd>(
+            debug_LL_y_continuation_baseline_seed, 6
+        );
+    }
+#endif
+    const double continuation_initial_RL_y = 1000.0 * RFy(0, 0);
+    const double continuation_initial_LL_y = 1000.0 * LFy(0, 0);
+    const double original_RL_target_y = 1000.0 * RFy(0, idx);
+    const double original_LL_target_y = 1000.0 * LFy(0, idx);
+    constexpr int continuation_steps = STEP_DEBUG_IK_Y_CONTINUATION_STEPS;
+    constexpr double final_y_scale =
+        static_cast<double>(STEP_DEBUG_IK_TARGET_Y_SCALE);
+
+    for (int continuation_step = 0;
+         continuation_step <= continuation_steps; ++continuation_step) {
+        const double sub_scale = final_y_scale
+            * static_cast<double>(continuation_step)
+            / static_cast<double>(continuation_steps);
+        Eigen::VectorXd RL_substep_target = Ref_RL_PR_vec;
+        Eigen::VectorXd LL_substep_target = Ref_LL_PR_vec;
+        RL_substep_target(1) = continuation_initial_RL_y
+            + sub_scale
+                * (original_RL_target_y - continuation_initial_RL_y);
+        LL_substep_target(1) = continuation_initial_LL_y
+            + sub_scale
+                * (original_LL_target_y - continuation_initial_LL_y);
+
+        const Eigen::VectorXd RL_substep_initial = RL_continuation_seed;
+        const Eigen::VectorXd LL_substep_initial = LL_continuation_seed;
+
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+        if (continuation_step == 0
+            && debug_y_continuation_baseline_seed_available) {
+            RL_th_raw_vec = RL_continuation_seed;
+            LL_th_raw_vec = LL_continuation_seed;
+            Eigen::VectorXd RL_baseline_pose(6), LL_baseline_pose(6);
+            BRP_Kinematics::BRP_RL_FK(
+                RL_th_raw_vec, link, RL_baseline_pose
+            );
+            BRP_Kinematics::BRP_LL_FK(
+                LL_th_raw_vec, link, LL_baseline_pose
+            );
+            BRP_Kinematics::last_RL_final_ERR =
+                (RL_substep_target - RL_baseline_pose).norm();
+            BRP_Kinematics::last_LL_final_ERR =
+                (LL_substep_target - LL_baseline_pose).norm();
+            BRP_Kinematics::last_RL_converged =
+                BRP_Kinematics::last_RL_final_ERR < 0.0001;
+            BRP_Kinematics::last_LL_converged =
+                BRP_Kinematics::last_LL_final_ERR < 0.0001;
+            BRP_Kinematics::last_RL_iteration_count = 0;
+            BRP_Kinematics::last_LL_iteration_count = 0;
+        } else
+#endif
+        {
+            BRP_Kinematics::BRP_RL_IK(
+                RL_substep_target,
+                RL_continuation_seed,
+                link,
+                RL_th_raw_vec
+            );
+            BRP_Kinematics::BRP_LL_IK(
+                LL_substep_target,
+                LL_continuation_seed,
+                link,
+                LL_th_raw_vec
+            );
+        }
+        if (log_continuation_substeps) {
+            writeYContinuationSubstep(
+                idx,
+                "RL",
+                continuation_step,
+                sub_scale,
+                RL_substep_target(1),
+                RL_substep_initial,
+                RL_th_raw_vec,
+                BRP_Kinematics::last_RL_converged,
+                BRP_Kinematics::last_RL_iteration_count,
+                BRP_Kinematics::last_RL_final_ERR
+            );
+            writeYContinuationSubstep(
+                idx,
+                "LL",
+                continuation_step,
+                sub_scale,
+                LL_substep_target(1),
+                LL_substep_initial,
+                LL_th_raw_vec,
+                BRP_Kinematics::last_LL_converged,
+                BRP_Kinematics::last_LL_iteration_count,
+                BRP_Kinematics::last_LL_final_ERR
+            );
+            debug_y_continuation_substep_csv.flush();
+        }
+        RL_continuation_seed = RL_th_raw_vec;
+        LL_continuation_seed = LL_th_raw_vec;
+    }
+#elif defined(STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING)
+    const Eigen::VectorXd RL_previous_output = RL_th_vec;
+    const Eigen::VectorXd LL_previous_output = LL_th_vec;
+    Eigen::VectorXd RL_zero_scale_target = Ref_RL_PR_vec;
+    Eigen::VectorXd LL_zero_scale_target = Ref_LL_PR_vec;
+    RL_zero_scale_target(1) = 1000.0 * RFy(0, 0);
+    LL_zero_scale_target(1) = 1000.0 * LFy(0, 0);
+
+    Eigen::Map<Eigen::VectorXd> RL_zero_scale_previous(
+        debug_RL_zero_scale_branch,
+        6
+    );
+    Eigen::Map<Eigen::VectorXd> LL_zero_scale_previous(
+        debug_LL_zero_scale_branch,
+        6
+    );
+    Eigen::VectorXd RL_zero_scale_branch(6), LL_zero_scale_branch(6);
+    BRP_Kinematics::BRP_RL_IK(
+        RL_zero_scale_target,
+        RL_zero_scale_previous,
+        link,
+        RL_zero_scale_branch
+    );
+    BRP_Kinematics::BRP_LL_IK(
+        LL_zero_scale_target,
+        LL_zero_scale_previous,
+        link,
+        LL_zero_scale_branch
+    );
+    std::memcpy(
+        debug_RL_zero_scale_branch,
+        RL_zero_scale_branch.data(),
+        6 * sizeof(double)
+    );
+    std::memcpy(
+        debug_LL_zero_scale_branch,
+        LL_zero_scale_branch.data(),
+        6 * sizeof(double)
+    );
+    BRP_Kinematics::BRP_RL_IK(
+        Ref_RL_PR_vec,
+        RL_zero_scale_branch,
+        link,
+        RL_th_raw_vec
+    );
+    BRP_Kinematics::BRP_LL_IK(
+        Ref_LL_PR_vec,
+        LL_zero_scale_branch,
+        link,
+        LL_th_raw_vec
+    );
+
+    RL_th_raw_vec = BRP_Kinematics::selectBranchTrackingStep(
+        RL_zero_scale_branch,
+        RL_th_raw_vec - RL_zero_scale_branch,
+        RL_previous_output,
+        Ref_RL_PR_vec,
+        link,
+        BRP_Kinematics::BRP_RL_FK
+    ).theta;
+    LL_th_raw_vec = BRP_Kinematics::selectBranchTrackingStep(
+        LL_zero_scale_branch,
+        LL_th_raw_vec - LL_zero_scale_branch,
+        LL_previous_output,
+        Ref_LL_PR_vec,
+        link,
+        BRP_Kinematics::BRP_LL_FK
+    ).theta;
+
+    Eigen::VectorXd RL_selected_pose(6), LL_selected_pose(6);
+    BRP_Kinematics::BRP_RL_FK(RL_th_raw_vec, link, RL_selected_pose);
+    BRP_Kinematics::BRP_LL_FK(LL_th_raw_vec, link, LL_selected_pose);
+    Eigen::VectorXd RL_selected_error = Ref_RL_PR_vec - RL_selected_pose;
+    Eigen::VectorXd LL_selected_error = Ref_LL_PR_vec - LL_selected_pose;
+    for (int pose_index = 3; pose_index < 6; ++pose_index) {
+        RL_selected_error(pose_index) = std::atan2(
+            std::sin(RL_selected_error(pose_index)),
+            std::cos(RL_selected_error(pose_index))
+        );
+        LL_selected_error(pose_index) = std::atan2(
+            std::sin(LL_selected_error(pose_index)),
+            std::cos(LL_selected_error(pose_index))
+        );
+    }
+    BRP_Kinematics::last_RL_final_ERR = RL_selected_error.norm();
+    BRP_Kinematics::last_LL_final_ERR = LL_selected_error.norm();
+    BRP_Kinematics::last_RL_converged =
+        BRP_Kinematics::last_RL_final_ERR < 0.0001;
+    BRP_Kinematics::last_LL_converged =
+        BRP_Kinematics::last_LL_final_ERR < 0.0001;
+#else
     BRP_Kinematics::BRP_RL_IK(Ref_RL_PR_vec, RL_th_vec, link, RL_th_raw_vec);
     BRP_Kinematics::BRP_LL_IK(Ref_LL_PR_vec, LL_th_vec, link, LL_th_raw_vec);
+#endif
+
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+    std::copy(
+        RL_th_raw_vec.data(),
+        RL_th_raw_vec.data() + RL_th_raw_vec.size(),
+        debug_RL_raw_joint_output
+    );
+    std::copy(
+        LL_th_raw_vec.data(),
+        LL_th_raw_vec.data() + LL_th_raw_vec.size(),
+        debug_LL_raw_joint_output
+    );
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+    constexpr double roll_branch_jump_threshold =
+        static_cast<double>(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD);
+    static_assert(
+        roll_branch_jump_threshold > 0.0,
+        "STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD must be positive"
+    );
+
+    const auto apply_roll_branch_jump_guard = [roll_branch_jump_threshold](
+        Eigen::VectorXd& candidate,
+        const Eigen::VectorXd& previous,
+        bool& guard_used,
+        double& max_delta_before
+    ) {
+        constexpr int hip_roll_index = 1;
+        constexpr int ankle_roll_index = 5;
+        const double hip_roll_delta = std::atan2(
+            std::sin(candidate(hip_roll_index) - previous(hip_roll_index)),
+            std::cos(candidate(hip_roll_index) - previous(hip_roll_index))
+        );
+        const double ankle_roll_delta = std::atan2(
+            std::sin(candidate(ankle_roll_index) - previous(ankle_roll_index)),
+            std::cos(candidate(ankle_roll_index) - previous(ankle_roll_index))
+        );
+        max_delta_before = std::max(
+            std::abs(hip_roll_delta),
+            std::abs(ankle_roll_delta)
+        );
+        guard_used = max_delta_before > roll_branch_jump_threshold;
+        if (guard_used) {
+            // Apply one common scale to both roll deltas so the hip/ankle roll
+            // cancellation relationship is preserved as much as possible.
+            const double pair_scale =
+                roll_branch_jump_threshold / max_delta_before;
+            candidate(hip_roll_index) =
+                previous(hip_roll_index) + pair_scale * hip_roll_delta;
+            candidate(ankle_roll_index) =
+                previous(ankle_roll_index) + pair_scale * ankle_roll_delta;
+        }
+    };
+
+    debug_RL_roll_jump_guard_used = false;
+    debug_LL_roll_jump_guard_used = false;
+    debug_RL_roll_jump_delta_before = 0.0;
+    debug_LL_roll_jump_delta_before = 0.0;
+    if (!debug_generate_y_scale_zero_baseline) {
+        apply_roll_branch_jump_guard(
+            RL_th_raw_vec,
+            RL_th_vec,
+            debug_RL_roll_jump_guard_used,
+            debug_RL_roll_jump_delta_before
+        );
+        apply_roll_branch_jump_guard(
+            LL_th_raw_vec,
+            LL_th_vec,
+            debug_LL_roll_jump_guard_used,
+            debug_LL_roll_jump_delta_before
+        );
+    }
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+    constexpr double roll_post_low_pass_alpha =
+        static_cast<double>(STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA);
+    static_assert(
+        roll_post_low_pass_alpha > 0.0
+            && roll_post_low_pass_alpha <= 1.0,
+        "STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA must be in (0, 1]"
+    );
+    const auto apply_roll_post_low_pass = [roll_post_low_pass_alpha](
+        Eigen::VectorXd& current,
+        const Eigen::VectorXd& previous_filtered,
+        bool& filter_used,
+        double& max_delta_before
+    ) {
+        constexpr int roll_joint_indices[] = {1, 5};
+        max_delta_before = 0.0;
+        for (int joint_index : roll_joint_indices) {
+            const double wrapped_delta = std::atan2(
+                std::sin(
+                    current(joint_index) - previous_filtered(joint_index)
+                ),
+                std::cos(
+                    current(joint_index) - previous_filtered(joint_index)
+                )
+            );
+            max_delta_before = std::max(
+                max_delta_before,
+                std::abs(wrapped_delta)
+            );
+            current(joint_index) = previous_filtered(joint_index)
+                + roll_post_low_pass_alpha * wrapped_delta;
+        }
+        filter_used = roll_post_low_pass_alpha < 1.0
+            && max_delta_before > 0.0;
+    };
+    debug_RL_roll_lowpass_used = false;
+    debug_LL_roll_lowpass_used = false;
+    debug_RL_roll_lowpass_delta_before = 0.0;
+    debug_LL_roll_lowpass_delta_before = 0.0;
+    if (!debug_generate_y_scale_zero_baseline && idx > 0) {
+        apply_roll_post_low_pass(
+            RL_th_raw_vec,
+            RL_th_vec,
+            debug_RL_roll_lowpass_used,
+            debug_RL_roll_lowpass_delta_before
+        );
+        apply_roll_post_low_pass(
+            LL_th_raw_vec,
+            LL_th_vec,
+            debug_LL_roll_lowpass_used,
+            debug_LL_roll_lowpass_delta_before
+        );
+    }
+#endif
+
+#ifdef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+    constexpr double pitch_chain_post_low_pass_alpha =
+        static_cast<double>(STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA);
+    static_assert(
+        pitch_chain_post_low_pass_alpha > 0.0
+            && pitch_chain_post_low_pass_alpha <= 1.0,
+        "STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA must be in (0, 1]"
+    );
+    const auto apply_pitch_chain_post_low_pass = [
+        pitch_chain_post_low_pass_alpha
+    ](
+        Eigen::VectorXd& current,
+        const Eigen::VectorXd& previous_filtered,
+        bool& filter_used,
+        double& max_delta_before
+    ) {
+        constexpr int pitch_joint_indices[] = {2, 3, 4};
+        max_delta_before = 0.0;
+        for (int joint_index : pitch_joint_indices) {
+            const double wrapped_delta = std::atan2(
+                std::sin(
+                    current(joint_index) - previous_filtered(joint_index)
+                ),
+                std::cos(
+                    current(joint_index) - previous_filtered(joint_index)
+                )
+            );
+            max_delta_before = std::max(
+                max_delta_before,
+                std::abs(wrapped_delta)
+            );
+            current(joint_index) = previous_filtered(joint_index)
+                + pitch_chain_post_low_pass_alpha * wrapped_delta;
+        }
+        filter_used = pitch_chain_post_low_pass_alpha < 1.0
+            && max_delta_before > 0.0;
+    };
+    debug_RL_pitch_chain_lowpass_used = false;
+    debug_LL_pitch_chain_lowpass_used = false;
+    debug_RL_pitch_chain_delta_before = 0.0;
+    debug_LL_pitch_chain_delta_before = 0.0;
+    if (!debug_generate_y_scale_zero_baseline && idx > 0) {
+        apply_pitch_chain_post_low_pass(
+            RL_th_raw_vec,
+            RL_th_vec,
+            debug_RL_pitch_chain_lowpass_used,
+            debug_RL_pitch_chain_delta_before
+        );
+        apply_pitch_chain_post_low_pass(
+            LL_th_raw_vec,
+            LL_th_vec,
+            debug_LL_pitch_chain_lowpass_used,
+            debug_LL_pitch_chain_delta_before
+        );
+    }
+#endif
+
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+    constexpr double roll_post_accel_limit =
+        static_cast<double>(STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_VALUE);
+    static_assert(
+        roll_post_accel_limit > 0.0,
+        "STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_VALUE must be positive"
+    );
+    const auto apply_roll_post_accel_limit = [roll_post_accel_limit](
+        Eigen::VectorXd& current,
+        const Eigen::VectorXd& previous,
+        double previous_velocity[2],
+        bool& limiter_used,
+        double& max_acceleration_before
+    ) {
+        constexpr int roll_joint_indices[] = {1, 5};
+        double requested_velocity[2] = {};
+        double requested_acceleration[2] = {};
+        max_acceleration_before = 0.0;
+        for (int pair_index = 0; pair_index < 2; ++pair_index) {
+            const int joint_index = roll_joint_indices[pair_index];
+            requested_velocity[pair_index] = std::atan2(
+                std::sin(current(joint_index) - previous(joint_index)),
+                std::cos(current(joint_index) - previous(joint_index))
+            );
+            requested_acceleration[pair_index] =
+                requested_velocity[pair_index]
+                - previous_velocity[pair_index];
+            max_acceleration_before = std::max(
+                max_acceleration_before,
+                std::abs(requested_acceleration[pair_index])
+            );
+        }
+
+        limiter_used = max_acceleration_before > roll_post_accel_limit;
+        const double pair_scale = limiter_used
+            ? roll_post_accel_limit / max_acceleration_before
+            : 1.0;
+        for (int pair_index = 0; pair_index < 2; ++pair_index) {
+            const int joint_index = roll_joint_indices[pair_index];
+            const double limited_velocity = previous_velocity[pair_index]
+                + pair_scale * requested_acceleration[pair_index];
+            current(joint_index) =
+                previous(joint_index) + limited_velocity;
+            previous_velocity[pair_index] = limited_velocity;
+        }
+    };
+    debug_RL_roll_acc_limit_used = false;
+    debug_LL_roll_acc_limit_used = false;
+    debug_RL_roll_acc_before = 0.0;
+    debug_LL_roll_acc_before = 0.0;
+    if (!debug_generate_y_scale_zero_baseline) {
+        if (idx == 0) {
+            std::fill(
+                std::begin(debug_RL_previous_roll_velocity),
+                std::end(debug_RL_previous_roll_velocity),
+                0.0
+            );
+            std::fill(
+                std::begin(debug_LL_previous_roll_velocity),
+                std::end(debug_LL_previous_roll_velocity),
+                0.0
+            );
+        } else {
+            apply_roll_post_accel_limit(
+                RL_th_raw_vec,
+                RL_th_vec,
+                debug_RL_previous_roll_velocity,
+                debug_RL_roll_acc_limit_used,
+                debug_RL_roll_acc_before
+            );
+            apply_roll_post_accel_limit(
+                LL_th_raw_vec,
+                LL_th_vec,
+                debug_LL_previous_roll_velocity,
+                debug_LL_roll_acc_limit_used,
+                debug_LL_roll_acc_before
+            );
+        }
+    }
+#endif
+
+    Eigen::VectorXd RL_post_guard_pose(6), LL_post_guard_pose(6);
+    BRP_Kinematics::BRP_RL_FK(
+        RL_th_raw_vec,
+        link,
+        RL_post_guard_pose
+    );
+    BRP_Kinematics::BRP_LL_FK(
+        LL_th_raw_vec,
+        link,
+        LL_post_guard_pose
+    );
+    debug_RL_post_guard_fk_pos_err =
+        (Ref_RL_PR_vec.head(3) - RL_post_guard_pose.head(3)).norm();
+    debug_LL_post_guard_fk_pos_err =
+        (Ref_LL_PR_vec.head(3) - LL_post_guard_pose.head(3)).norm();
+
+    const auto wrapped_orientation_error_norm = [](
+        const Eigen::VectorXd& target,
+        const Eigen::VectorXd& actual
+    ) {
+        double squared_error = 0.0;
+        for (int orientation_index = 3; orientation_index < 6;
+             ++orientation_index) {
+            const double difference =
+                target(orientation_index) - actual(orientation_index);
+            const double wrapped_difference = std::atan2(
+                std::sin(difference),
+                std::cos(difference)
+            );
+            squared_error += wrapped_difference * wrapped_difference;
+        }
+        return std::sqrt(squared_error);
+    };
+    debug_RL_post_guard_fk_ori_err = wrapped_orientation_error_norm(
+        Ref_RL_PR_vec,
+        RL_post_guard_pose
+    );
+    debug_LL_post_guard_fk_ori_err = wrapped_orientation_error_norm(
+        Ref_LL_PR_vec,
+        LL_post_guard_pose
+    );
+#endif
 
 #ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
 #ifdef STEP_DEBUG_IK_POST_LIMIT_VALUE
@@ -4024,9 +4982,24 @@ void Pick::Huddle(const MatrixXd& RFx, int Index_CNT,double& RL, double& LL, dou
 
 void RunStepWalkDebugOnce() {
     Trajectory trajectory;
-    std::cout << "[STEP DEBUG][SLOW TEST] Calling Go_Straight_start "
-                 "(step=0.03, distance=0.20, height=0.02)." << std::endl;
-    trajectory.Go_Straight_start(0.03, 0.20, 0.02);
+    constexpr double debug_walk_step = 0.03;
+#ifdef STEP_DEBUG_LONG_WALK
+    constexpr double debug_walk_distance = 0.60;
+#else
+    constexpr double debug_walk_distance = 0.20;
+#endif
+    constexpr double debug_walk_height = 0.02;
+
+    std::cout << "[STEP DEBUG][SLOW TEST] Calling Go_Straight_start"
+              << " (step=" << debug_walk_step
+              << ", distance=" << debug_walk_distance
+              << ", height=" << debug_walk_height << ")."
+              << std::endl;
+    trajectory.Go_Straight_start(
+        debug_walk_step,
+        debug_walk_distance,
+        debug_walk_height
+    );
     std::cout << "[STEP DEBUG][SLOW TEST] Go_Straight_start completed." << std::endl;
     std::cout << "[STEP DEBUG] sim_n = " << trajectory.Return_Sim_n() << std::endl;
     std::cout << "[STEP DEBUG] walktime_n = " << trajectory.Return_Walktime_n() << std::endl;
@@ -4083,17 +5056,215 @@ void RunStepWalkDebugOnce() {
         return;
     }
 
+#ifdef STEP_DEBUG_LONG_WALK
+    const int debug_frame_count = sim_n;
+#else
     const int debug_frame_count = std::min(
         sim_n,
         static_cast<int>(reference_column_count)
     );
+#endif
+    std::cout << "[STEP DEBUG][SLOW TEST] sim_n = " << sim_n
+              << ", debug_frame_count = " << debug_frame_count
+              << std::endl;
+
+#ifdef STEP_DEBUG_LONG_WALK
+    if (reference_column_count < debug_frame_count) {
+        std::cerr << "[STEP DEBUG][SLOW TEST][ERROR] Long-walk foot reference "
+                  << "has only " << reference_column_count
+                  << " columns for " << debug_frame_count
+                  << " requested frames." << std::endl;
+        return;
+    }
+#else
     if (debug_frame_count < sim_n) {
         std::cout << "[STEP DEBUG][SLOW TEST][WARNING] Limiting debug frames from "
                   << sim_n << " to " << debug_frame_count
                   << " to stay within foot reference matrix columns." << std::endl;
     }
+#endif
 
-#ifdef STEP_DEBUG_IK_POST_CONTINUITY_LIMIT
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+    std::vector<std::array<double, 6>> RL_y_scale_zero_baseline(
+        debug_frame_count
+    );
+    std::vector<std::array<double, 6>> LL_y_scale_zero_baseline(
+        debug_frame_count
+    );
+    IK_Function baseline_ik;
+    baseline_ik.debug_generate_y_scale_zero_baseline = true;
+    for (int frame = 0; frame < debug_frame_count; ++frame) {
+        baseline_ik.BRP_Simulation(
+            ref_rl_x,
+            ref_rl_y,
+            ref_rl_z,
+            ref_ll_x,
+            ref_ll_y,
+            ref_ll_z,
+            frame
+        );
+        std::copy(
+            std::begin(baseline_ik.RL_th),
+            std::end(baseline_ik.RL_th),
+            RL_y_scale_zero_baseline[frame].begin()
+        );
+        std::copy(
+            std::begin(baseline_ik.LL_th),
+            std::end(baseline_ik.LL_th),
+            LL_y_scale_zero_baseline[frame].begin()
+        );
+    }
+    ik.debug_y_continuation_baseline_seed_available = true;
+#endif
+
+#if defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS) \
+    && defined(STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL) \
+    && defined(STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA_LABEL) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_LABEL)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale"
+        STEP_DEBUG_Y_SCALE_STRINGIFY(STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL)
+        "_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_jumpguard_"
+        STEP_DEBUG_JUMP_GUARD_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL
+        )
+        "_lpf_"
+        STEP_DEBUG_ROLL_LPF_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL
+        )
+        "_pitchlpf_"
+        STEP_DEBUG_PITCH_LPF_STRINGIFY(
+            STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA_LABEL
+        )
+        "_rollacclim"
+        STEP_DEBUG_ROLL_ACCEL_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT_LABEL
+        )
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS) \
+    && defined(STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL) \
+    && defined(STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA_LABEL)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale"
+        STEP_DEBUG_Y_SCALE_STRINGIFY(STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL)
+        "_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_jumpguard_"
+        STEP_DEBUG_JUMP_GUARD_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL
+        )
+        "_lpf_"
+        STEP_DEBUG_ROLL_LPF_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL
+        )
+        "_pitchlpf_"
+        STEP_DEBUG_PITCH_LPF_STRINGIFY(
+            STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS_ALPHA_LABEL
+        )
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL) \
+    && defined(STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale"
+        STEP_DEBUG_Y_SCALE_STRINGIFY(STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL)
+        "_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_jumpguard_"
+        STEP_DEBUG_JUMP_GUARD_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL
+        )
+        "_lpf_"
+        STEP_DEBUG_ROLL_LPF_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_POST_LOW_PASS_ALPHA_LABEL
+        )
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale005_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_jumpguard_"
+        STEP_DEBUG_JUMP_GUARD_STRINGIFY(
+            STEP_DEBUG_IK_ROLL_BRANCH_JUMP_THRESHOLD_LABEL
+        )
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE) \
+    && defined(STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale005_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_jumpguard_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale005_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_baseline_long.csv";
+#elif defined(STEP_DEBUG_IK_Y_SCALE_CONTINUATION)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale005_continuation"
+        STEP_DEBUG_CONTINUATION_STRINGIFY(
+            STEP_DEBUG_IK_Y_CONTINUATION_STEPS
+        )
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_SMALL_ROLL_BRANCH_TRACKING)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale005_branch_"
+        STEP_DEBUG_BRANCH_STRINGIFY(STEP_DEBUG_IK_BRANCH_WEIGHT_LABEL)
+        "_roll_"
+        STEP_DEBUG_BRANCH_STRINGIFY(STEP_DEBUG_IK_SMALL_ROLL_WEIGHT_LABEL)
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_TARGET_Y_SCALE_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_y_scale"
+        STEP_DEBUG_Y_SCALE_STRINGIFY(STEP_DEBUG_IK_TARGET_Y_SCALE_LABEL)
+        "_long.csv";
+#elif defined(STEP_DEBUG_IK_DIAGNOSIS_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_ik_diagnosis_long.csv";
+#elif defined(STEP_DEBUG_CONVERGENCE_GUARD_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_convergence_guard_long.csv";
+#elif defined(STEP_DEBUG_ROLL_AMP_PAIR_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_roll_amp_"
+        STEP_DEBUG_STRINGIFY(STEP_DEBUG_IK_ROLL_AMPLITUDE_WEIGHT_LABEL)
+        "_pair_"
+        STEP_DEBUG_STRINGIFY(STEP_DEBUG_IK_ROLL_PAIR_WEIGHT_LABEL)
+        "_long.csv";
+#elif defined(STEP_DEBUG_ROLL_AMP_W05_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_roll_amp_w05_long.csv";
+#elif defined(STEP_DEBUG_PAIR_W1_LONG)
+    constexpr const char* debug_csv_filename =
+        "walk_forward_debug_slow_pair_w1_long.csv";
+#elif defined(STEP_DEBUG_IK_POST_CONTINUITY_LIMIT)
     constexpr const char* debug_csv_filename =
         "walk_forward_debug_slow_ik_post_limit012.csv";
 #elif defined(STEP_DEBUG_ROLL_RATE_LIMIT)
@@ -4110,10 +5281,20 @@ void RunStepWalkDebugOnce() {
     }
     csv << std::setprecision(17);
     csv << "frame"
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+        << ",RL_target_x,RL_target_y,RL_target_z"
+        << ",LL_target_x,LL_target_y,LL_target_z"
+        << ",RL_target_roll,RL_target_pitch,RL_target_yaw"
+        << ",LL_target_roll,LL_target_pitch,LL_target_yaw"
+#endif
         << ",RL0_raw,RL1_raw,RL2_raw,RL3_raw,RL4_raw,RL5_raw"
         << ",LL0_raw,LL1_raw,LL2_raw,LL3_raw,LL4_raw,LL5_raw"
         << ",RL0_wrap,RL1_wrap,RL2_wrap,RL3_wrap,RL4_wrap,RL5_wrap"
         << ",LL0_wrap,LL1_wrap,LL2_wrap,LL3_wrap,LL4_wrap,LL5_wrap"
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+        << ",RL_roll_sum,LL_roll_sum"
+        << ",RL_roll_abs_sum,LL_roll_abs_sum"
+#endif
         << ",Ref_RL_x,Ref_RL_y,Ref_RL_z,Ref_LL_x,Ref_LL_y,Ref_LL_z"
         // Y-balance debug columns: preview COM/ZMP/CP, raw foot y, and IK y inputs.
         << ",COM_y,ZMP_y_ref,CP_y,RF_y,LF_y,IK_RL_y_input,IK_LL_y_input"
@@ -4123,6 +5304,25 @@ void RunStepWalkDebugOnce() {
         << ",RL_iteration_count,LL_iteration_count"
         << ",RL_final_ERR,LL_final_ERR"
         << ",RL_converged,LL_converged"
+#ifdef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+        << ",RL_roll_jump_guard_used,LL_roll_jump_guard_used"
+        << ",RL_roll_jump_delta_before,LL_roll_jump_delta_before"
+#ifdef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+        << ",RL_roll_lowpass_used,LL_roll_lowpass_used"
+        << ",RL_roll_lowpass_delta_before,LL_roll_lowpass_delta_before"
+#endif
+#ifdef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+        << ",RL_pitch_chain_lowpass_used,LL_pitch_chain_lowpass_used"
+        << ",RL_pitch_chain_delta_before,LL_pitch_chain_delta_before"
+#endif
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+        << ",RL_roll_acc_limit_used,LL_roll_acc_limit_used"
+        << ",RL_roll_acc_before,LL_roll_acc_before"
+#endif
+        << ",RL_post_guard_fk_pos_err,LL_post_guard_fk_pos_err"
+        << ",RL_post_guard_fk_ori_err,LL_post_guard_fk_ori_err"
+#endif
+        << ",RL_convergence_fallback_used,LL_convergence_fallback_used"
         << ",RL_max_abs_delta_theta,LL_max_abs_delta_theta"
         << ",RL_delta_theta_1,RL_delta_theta_5"
         << ",LL_delta_theta_1,LL_delta_theta_5"
@@ -4263,6 +5463,18 @@ void RunStepWalkDebugOnce() {
 #endif
 
     for (int frame = 0; frame < debug_frame_count; ++frame) {
+#ifdef STEP_DEBUG_IK_Y_SCALE_CONTINUATION_FROM_BASELINE
+        std::copy(
+            RL_y_scale_zero_baseline[frame].begin(),
+            RL_y_scale_zero_baseline[frame].end(),
+            std::begin(ik.debug_RL_y_continuation_baseline_seed)
+        );
+        std::copy(
+            LL_y_scale_zero_baseline[frame].begin(),
+            LL_y_scale_zero_baseline[frame].end(),
+            std::begin(ik.debug_LL_y_continuation_baseline_seed)
+        );
+#endif
         ik.BRP_Simulation(ref_rl_x,
                           ref_rl_y,
                           ref_rl_z,
@@ -4328,18 +5540,49 @@ void RunStepWalkDebugOnce() {
         }
 
         csv << frame;
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+        csv << ',' << debug_RL_target_pose[0]
+            << ',' << debug_RL_target_pose[1]
+            << ',' << debug_RL_target_pose[2]
+            << ',' << debug_LL_target_pose[0]
+            << ',' << debug_LL_target_pose[1]
+            << ',' << debug_LL_target_pose[2]
+            << ',' << debug_RL_target_pose[3]
+            << ',' << debug_RL_target_pose[4]
+            << ',' << debug_RL_target_pose[5]
+            << ',' << debug_LL_target_pose[3]
+            << ',' << debug_LL_target_pose[4]
+            << ',' << debug_LL_target_pose[5];
+        for (double angle : debug_RL_raw_joint_output) {
+            csv << ',' << angle;
+        }
+        for (double angle : debug_LL_raw_joint_output) {
+            csv << ',' << angle;
+        }
+#else
         for (double angle : ik.RL_th) {
             csv << ',' << angle;
         }
         for (double angle : ik.LL_th) {
             csv << ',' << angle;
         }
+#endif
         for (double angle : ik.RL_th) {
             csv << ',' << wrapAngle(angle);
         }
         for (double angle : ik.LL_th) {
             csv << ',' << wrapAngle(angle);
         }
+#ifdef STEP_DEBUG_IK_DIAGNOSTIC_CAPTURE
+        const double rl_hip_roll = wrapAngle(ik.RL_th[1]);
+        const double rl_ankle_roll = wrapAngle(ik.RL_th[5]);
+        const double ll_hip_roll = wrapAngle(ik.LL_th[1]);
+        const double ll_ankle_roll = wrapAngle(ik.LL_th[5]);
+        csv << ',' << rl_hip_roll + rl_ankle_roll
+            << ',' << ll_hip_roll + ll_ankle_roll
+            << ',' << std::abs(rl_hip_roll) + std::abs(rl_ankle_roll)
+            << ',' << std::abs(ll_hip_roll) + std::abs(ll_ankle_roll);
+#endif
         csv << ',' << ref_rl_x(0, frame)
             << ',' << ref_rl_y(0, frame)
             << ',' << ref_rl_z(0, frame)
@@ -4363,6 +5606,36 @@ void RunStepWalkDebugOnce() {
             << ',' << BRP_Kinematics::last_LL_final_ERR
             << ',' << (BRP_Kinematics::last_RL_converged ? 1 : 0)
             << ',' << (BRP_Kinematics::last_LL_converged ? 1 : 0)
+#ifdef STEP_DEBUG_IK_ROLL_BRANCH_JUMP_REJECT
+            << ',' << (debug_RL_roll_jump_guard_used ? 1 : 0)
+            << ',' << (debug_LL_roll_jump_guard_used ? 1 : 0)
+            << ',' << debug_RL_roll_jump_delta_before
+            << ',' << debug_LL_roll_jump_delta_before
+#ifdef STEP_DEBUG_IK_ROLL_POST_LOW_PASS
+            << ',' << (debug_RL_roll_lowpass_used ? 1 : 0)
+            << ',' << (debug_LL_roll_lowpass_used ? 1 : 0)
+            << ',' << debug_RL_roll_lowpass_delta_before
+            << ',' << debug_LL_roll_lowpass_delta_before
+#endif
+#ifdef STEP_DEBUG_IK_PITCH_CHAIN_POST_LOW_PASS
+            << ',' << (debug_RL_pitch_chain_lowpass_used ? 1 : 0)
+            << ',' << (debug_LL_pitch_chain_lowpass_used ? 1 : 0)
+            << ',' << debug_RL_pitch_chain_delta_before
+            << ',' << debug_LL_pitch_chain_delta_before
+#endif
+#ifdef STEP_DEBUG_IK_ROLL_POST_ACCEL_LIMIT
+            << ',' << (debug_RL_roll_acc_limit_used ? 1 : 0)
+            << ',' << (debug_LL_roll_acc_limit_used ? 1 : 0)
+            << ',' << debug_RL_roll_acc_before
+            << ',' << debug_LL_roll_acc_before
+#endif
+            << ',' << debug_RL_post_guard_fk_pos_err
+            << ',' << debug_LL_post_guard_fk_pos_err
+            << ',' << debug_RL_post_guard_fk_ori_err
+            << ',' << debug_LL_post_guard_fk_ori_err
+#endif
+            << ',' << (BRP_Kinematics::last_RL_convergence_fallback_used ? 1 : 0)
+            << ',' << (BRP_Kinematics::last_LL_convergence_fallback_used ? 1 : 0)
             << ',' << BRP_Kinematics::last_RL_max_abs_delta_theta
             << ',' << BRP_Kinematics::last_LL_max_abs_delta_theta
             << ',' << BRP_Kinematics::last_RL_delta_theta_1
