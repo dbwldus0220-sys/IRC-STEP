@@ -12,6 +12,9 @@
 #include "sensor_msgs/msg/imu.hpp" //
 #include "robot_msgs/msg/line_result.hpp"
 #include <atomic>
+#include <array>
+#include <cstdint>
+#include <fstream>
 
 #include "dynamixel.hpp"
 #include "BRP_Kinematics.hpp"
@@ -43,6 +46,17 @@ private:
 #ifdef STEP_ROLL_RATE_LIMIT_SAFETY
     VectorXd prev_safe_all_theta_ = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
     bool roll_rate_limit_initialized_ = false;
+#endif
+
+#ifdef STEP_SAFETY_COMMAND_LOG
+    std::ofstream safety_command_log_;
+    std::uint64_t safety_command_log_frame_ = 0;
+    bool safety_command_log_initialized_ = false;
+    void LogSafetyCommands(
+        const VectorXd& raw_all_theta,
+        const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
+        bool roll_guard_enabled
+    );
 #endif
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscriber_; //

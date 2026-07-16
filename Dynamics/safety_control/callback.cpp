@@ -2,10 +2,16 @@
 #include "sensor_msgs/msg/imu.hpp"  // IMU 메시지 타입 추가
 #include <algorithm>
 #include <cmath>  
+#include <iomanip>
 #include "robot_msgs/msg/line_result.hpp"
 #include "sensor_msgs/msg/imu.hpp" //imu sensor
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
+
+#if defined(STEP_TEST_INJECT_ROLL_JUMP) \
+    && !defined(STEP_ROLL_RATE_LIMIT_SAFETY)
+#error "STEP_TEST_INJECT_ROLL_JUMP requires STEP_ROLL_RATE_LIMIT_SAFETY"
+#endif
 
 bool flgflg = 0;
 FILE *Trajectory_all;
@@ -854,8 +860,104 @@ void Callback::ResetMotion()
     roll_rate_limit_initialized_ = false;
 #endif
 
+#ifdef STEP_SAFETY_COMMAND_LOG
+    // Keep the command-log frame monotonic across motion resets so multiple
+    // motions remain distinguishable in one CSV. Only the roll guard state
+    // needs reinitialization here.
+#endif
+
     RCLCPP_INFO(rclcpp::get_logger("Callback"), "[ResetMotion] 인덱스 및 상태 초기화 완료");
 }
+
+#ifdef STEP_SAFETY_COMMAND_LOG
+void Callback::LogSafetyCommands(
+    const VectorXd& raw_all_theta,
+    const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
+    bool roll_guard_enabled
+)
+{
+    constexpr const char* safety_command_log_path =
+        "/home/yeon/IRC/IRC-STEP/Dynamics/safety_control/"
+        "safety_all_theta_command_log.csv";
+
+    if (!safety_command_log_initialized_)
+    {
+        safety_command_log_.open(safety_command_log_path);
+        if (!safety_command_log_.is_open())
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "Failed to open safety command log: %s",
+                safety_command_log_path
+            );
+            safety_command_log_initialized_ = true;
+            return;
+        }
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Opened safety command log: %s",
+            safety_command_log_path
+        );
+
+        safety_command_log_ << "frame,go";
+        safety_command_log_ << std::setprecision(17);
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",raw_" << joint_index;
+        }
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",safe_" << joint_index;
+        }
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",delta_" << joint_index;
+        }
+        safety_command_log_
+            << ",roll_guard_enabled"
+            << ",roll_guard_used_1"
+            << ",roll_guard_used_5"
+            << ",roll_guard_used_7"
+            << ",roll_guard_used_11\n";
+        safety_command_log_initialized_ = true;
+    }
+
+    if (!safety_command_log_.is_open())
+    {
+        return;
+    }
+
+    safety_command_log_ << safety_command_log_frame_++ << ',' << go_;
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ',' << raw_all_theta[joint_index];
+    }
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ',' << All_Theta[joint_index];
+    }
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ','
+            << All_Theta[joint_index] - raw_all_theta[joint_index];
+    }
+    safety_command_log_
+        << ',' << (roll_guard_enabled ? 1 : 0)
+        << ',' << (roll_guard_used[1] ? 1 : 0)
+        << ',' << (roll_guard_used[5] ? 1 : 0)
+        << ',' << (roll_guard_used[7] ? 1 : 0)
+        << ',' << (roll_guard_used[11] ? 1 : 0)
+        << '\n';
+    safety_command_log_.flush();
+}
+#endif
 
 
 void Callback::Write_All_Theta()
@@ -1073,6 +1175,26 @@ void Callback::Write_All_Theta()
     All_Theta[21] = pick_Ptr->NC_th[0] + 0 * DEG2RAD; // neck_RL
     All_Theta[22] = pick_Ptr->NC_th[1] - 24 * DEG2RAD; // neck_UD
 
+#ifdef STEP_SAFETY_COMMAND_LOG
+    const VectorXd raw_all_theta = All_Theta;
+    std::array<bool, NUMBER_OF_DYNAMIXELS> roll_guard_used{};
+#endif
+
+#ifdef STEP_TEST_INJECT_ROLL_JUMP
+    static bool test_roll_jump_injected = false;
+    if (!test_roll_jump_injected)
+    {
+        constexpr double test_roll_jump = 0.20;
+        All_Theta[1] += test_roll_jump;
+        test_roll_jump_injected = true;
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Injected one-time test roll jump: All_Theta[1] += %.2f rad",
+            test_roll_jump
+        );
+    }
+#endif
+
 #ifdef STEP_ROLL_RATE_LIMIT_SAFETY
     constexpr double roll_rate_limit = 0.05;
     constexpr int roll_joint_indices[] = {1, 5, 7, 11};
@@ -1098,9 +1220,26 @@ void Callback::Write_All_Theta()
             );
             All_Theta[joint_index] =
                 prev_safe_all_theta_[joint_index] + clamped_delta;
+#ifdef STEP_SAFETY_COMMAND_LOG
+            roll_guard_used[joint_index] =
+                std::abs(clamped_delta - delta) > 1.0e-12;
+#endif
             prev_safe_all_theta_[joint_index] = All_Theta[joint_index];
         }
     }
+#endif
+
+#ifdef STEP_SAFETY_COMMAND_LOG
+#ifdef STEP_ROLL_RATE_LIMIT_SAFETY
+    constexpr bool roll_guard_enabled = true;
+#else
+    constexpr bool roll_guard_enabled = false;
+#endif
+    LogSafetyCommands(
+        raw_all_theta,
+        roll_guard_used,
+        roll_guard_enabled
+    );
 #endif
 
     if(go == 0)
