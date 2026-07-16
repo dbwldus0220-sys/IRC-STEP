@@ -3,6 +3,9 @@ project(robot_msgs)
 add_compile_definitions(STEP_SAFETY_COMMAND_LOG)
 add_compile_definitions(STEP_ROLL_RATE_LIMIT_SAFETY)
 
+option(STEP_DRY_RUN_NO_DXL
+  "Run safety_control_node without Dynamixel hardware communication" OFF)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -36,6 +39,12 @@ add_executable(safety_control_node
   dynamixel_controller.cpp
   ../STEP_Dynamics.cpp
 )
+
+if(STEP_DRY_RUN_NO_DXL)
+  target_compile_definitions(safety_control_node PRIVATE STEP_DRY_RUN_NO_DXL=1)
+  message(WARNING
+    "STEP_DRY_RUN_NO_DXL is enabled: Dynamixel hardware communication is disabled")
+endif()
 
 target_include_directories(safety_control_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}

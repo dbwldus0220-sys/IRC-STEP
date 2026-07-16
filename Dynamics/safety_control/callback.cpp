@@ -8,11 +8,6 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
-#if defined(STEP_TEST_INJECT_ROLL_JUMP) \
-    && !defined(STEP_ROLL_RATE_LIMIT_SAFETY)
-#error "STEP_TEST_INJECT_ROLL_JUMP requires STEP_ROLL_RATE_LIMIT_SAFETY"
-#endif
-
 bool flgflg = 0;
 FILE *Trajectory_all;
 
@@ -1178,21 +1173,6 @@ void Callback::Write_All_Theta()
 #ifdef STEP_SAFETY_COMMAND_LOG
     const VectorXd raw_all_theta = All_Theta;
     std::array<bool, NUMBER_OF_DYNAMIXELS> roll_guard_used{};
-#endif
-
-#ifdef STEP_TEST_INJECT_ROLL_JUMP
-    static bool test_roll_jump_injected = false;
-    if (!test_roll_jump_injected)
-    {
-        constexpr double test_roll_jump = 0.20;
-        All_Theta[1] += test_roll_jump;
-        test_roll_jump_injected = true;
-        RCLCPP_WARN(
-            this->get_logger(),
-            "Injected one-time test roll jump: All_Theta[1] += %.2f rad",
-            test_roll_jump
-        );
-    }
 #endif
 
 #ifdef STEP_ROLL_RATE_LIMIT_SAFETY

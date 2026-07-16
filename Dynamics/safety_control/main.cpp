@@ -26,7 +26,14 @@ public:
     : Node("main_node"), motion_in_progress_(false)
     {
         // FTDI USB latency timer 설정 (주의: 여전히 sudo 필요)
+#ifndef STEP_DRY_RUN_NO_DXL
         system("echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer");
+#else
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Dry-run mode: skipping FTDI setup and all Dynamixel hardware I/O"
+        );
+#endif
 
         // 객체 초기화
         dxl_ = std::make_shared<Dxl>();

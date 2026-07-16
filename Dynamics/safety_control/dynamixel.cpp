@@ -31,6 +31,13 @@
 
 Dxl::Dxl()
 {
+#ifdef STEP_DRY_RUN_NO_DXL
+    SetPresentMode(Mode);
+    std::cout
+        << "[Dry-run] STEP_DRY_RUN_NO_DXL enabled; skipping all Dynamixel "
+           "port access, configuration, reads, and writes."
+        << std::endl;
+#else
     uint8_t dxl_error = 0;
     int dxl_comm_result = COMM_TX_FAIL;
 
@@ -117,10 +124,12 @@ Dxl::Dxl()
     VectorXd PID_Gain(3);
     PID_Gain << 850, 0, 0;
     SetPIDGain(PID_Gain);
+#endif
 }
 
 Dxl::~Dxl()
 {
+#ifndef STEP_DRY_RUN_NO_DXL
     uint8_t dxl_error = 0;
     int dxl_comm_result = COMM_TX_FAIL;
 
@@ -143,6 +152,7 @@ Dxl::~Dxl()
     }
 
     portHandler->closePort();
+#endif
 }
 
 
@@ -156,12 +166,14 @@ Dxl::~Dxl()
 //Getter() : 각도 읽기(raw->rad)
 void Dxl::syncReadTheta()
 {
+#ifndef STEP_DRY_RUN_NO_DXL
     dynamixel::GroupSyncRead groupSyncRead(portHandler, packetHandler, DxlReg_PresentPosition, 4);
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) groupSyncRead.addParam(dxl_id[i]);
     groupSyncRead.txRxPacket();
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) position[i] = groupSyncRead.getData(dxl_id[i], DxlReg_PresentPosition, 4);
     groupSyncRead.clearParam();
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) th_[i] = convertValue2Radian(position[i]) - PI - zero_manual_offset[i];
+#endif
 }
 
 //Getter() : 각도 getter() [rad]
@@ -174,11 +186,13 @@ VectorXd Dxl::GetThetaAct()
 //Getter() : velocity 읽기 (raw data)
 void Dxl::syncReadThetaDot()
 {
+#ifndef STEP_DRY_RUN_NO_DXL
     dynamixel::GroupSyncRead groupSyncReadThDot(portHandler, packetHandler, DxlReg_PresentVelocity, 4);
     for (uint8_t i=0; i<NUMBER_OF_DYNAMIXELS; i++) groupSyncReadThDot.addParam(dxl_id[i]);
     groupSyncReadThDot.txRxPacket();
     for(uint8_t i=0; i<NUMBER_OF_DYNAMIXELS; i++) velocity[i] = groupSyncReadThDot.getData(dxl_id[i], DxlReg_PresentVelocity, 4);
     groupSyncReadThDot.clearParam();
+#endif
 }
 
 //Getter() : 각속도 getter() [rad/s] 
@@ -226,12 +240,14 @@ VectorXd Dxl::GetThetaDotEstimated()
 //Getter() : 전류값 [mA] 
 void Dxl::SyncReadCurrent()
 {
+#ifndef STEP_DRY_RUN_NO_DXL
     dynamixel::GroupSyncRead groupSyncRead(portHandler, packetHandler, DxlReg_PresentCurrent, 2);
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) groupSyncRead.addParam(dxl_id[i]);
     groupSyncRead.txRxPacket();
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) current[i] = groupSyncRead.getData(dxl_id[i], DxlReg_PresentCurrent, 2);
     groupSyncRead.clearParam();
     for(uint8_t i=0; i < NUMBER_OF_DYNAMIXELS; i++) cur_[i] = convertValue2Current(current[i]);
+#endif
 }
 
 VectorXd Dxl::GetCurrent()
@@ -253,6 +269,15 @@ int16_t Dxl::GetPresentMode()
 //setter() : 각도 setter() [rad]
 void Dxl::syncWriteTheta()
 {
+#ifdef STEP_DRY_RUN_NO_DXL
+  static bool skip_logged = false;
+  if (!skip_logged)
+  {
+    std::cout << "[Dry-run] Skipping Dxl::syncWriteTheta()." << std::endl;
+    skip_logged = true;
+  }
+  return;
+#else
   dynamixel::GroupSyncWrite gSyncWriteTh(portHandler, packetHandler, DxlReg_GoalPosition, 4);
 
   uint8_t parameter[NUMBER_OF_DYNAMIXELS] = {0};
@@ -264,6 +289,7 @@ void Dxl::syncWriteTheta()
   }
   gSyncWriteTh.txPacket();
   gSyncWriteTh.clearParam();
+#endif
 }
 
 
@@ -282,6 +308,15 @@ void Dxl::SetThetaRef(VectorXd theta)
 //setter() : 토크 setter() [Nm]
 void Dxl::syncWriteTorque()
 {
+#ifdef STEP_DRY_RUN_NO_DXL
+    static bool skip_logged = false;
+    if (!skip_logged)
+    {
+        std::cout << "[Dry-run] Skipping Dxl::syncWriteTorque()." << std::endl;
+        skip_logged = true;
+    }
+    return;
+#else
     dynamixel::GroupSyncWrite groupSyncWriter(portHandler, packetHandler, DxlReg_GoalCurrent, 2);
     uint8_t parameter[NUMBER_OF_DYNAMIXELS] = {0};
     for (uint8_t i=0; i<NUMBER_OF_DYNAMIXELS; i++)
@@ -297,6 +332,7 @@ void Dxl::syncWriteTorque()
     }
     groupSyncWriter.txPacket();
     groupSyncWriter.clearParam();
+#endif
 }
 
 //Setter() : 목표 토크 설정 [Nm]
@@ -307,7 +343,17 @@ void Dxl::SetTorqueRef(VectorXd a_torque)
 
 // Setter() : PID gain setter()
 void Dxl::SetPIDGain(VectorXd PID_Gain)
-{    
+{
+#ifdef STEP_DRY_RUN_NO_DXL
+    static bool skip_logged = false;
+    if (!skip_logged)
+    {
+        std::cout << "[Dry-run] Skipping Dxl::SetPIDGain()." << std::endl;
+        skip_logged = true;
+    }
+    (void)PID_Gain;
+    return;
+#else
     uint8_t dxl_error = 0;
     
     if (PID_Gain.size() != 3)
@@ -315,7 +361,7 @@ void Dxl::SetPIDGain(VectorXd PID_Gain)
         std::cerr << "PID_Gain should have exactly 3 elements: P, I, and D gains." << std::endl;
         return;
     }
-    
+
     uint16_t P_gain = static_cast<uint16_t>(PID_Gain(0));
     uint16_t I_gain = static_cast<uint16_t>(PID_Gain(1));
     uint16_t D_gain = static_cast<uint16_t>(PID_Gain(2));
@@ -344,6 +390,7 @@ void Dxl::SetPIDGain(VectorXd PID_Gain)
             std::cerr << "Failed to set D gain for DXL ID: " << static_cast<int>(dxl_id[i]) << std::endl;
         }
     }
+#endif
 }
 
 //Setter() : 현재 모드 설정
@@ -431,18 +478,27 @@ void Dxl::initActuatorValues()
 VectorXd Dxl::read_rad()
 {
     VectorXd rdl_(NUMBER_OF_DYNAMIXELS);
+#ifdef STEP_DRY_RUN_NO_DXL
+    rdl_.setZero();
+#else
     int32_t present_position = 0;
     for (int i =0; i< NUMBER_OF_DYNAMIXELS; i++)
     {
         packetHandler->read4ByteTxRx(portHandler, dxl_id[i], DxlReg_PresentPosition,(uint32_t*)&present_position);
         rdl_[i] = (present_position - 2048) * (2.0 * M_PI / 4096.0);
     }
+#endif
 
     return rdl_;
 }
 
 void Dxl::MoveToTargetSmoothCos(const VectorXd& theta_goal, int steps, int delay_ms)
 {
+#ifdef STEP_DRY_RUN_NO_DXL
+    (void)steps;
+    (void)delay_ms;
+    SetThetaRef(theta_goal);
+#else
     VectorXd theta_now = read_rad();
 
     for (int s = 1; s <= steps; ++s)
@@ -456,4 +512,5 @@ void Dxl::MoveToTargetSmoothCos(const VectorXd& theta_goal, int steps, int delay
     SetThetaRef(theta_goal);
     syncWriteTheta();
     std::this_thread::sleep_for(std::chrono::seconds(3));
+#endif
 }
