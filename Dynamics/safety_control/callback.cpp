@@ -875,6 +875,24 @@ void Callback::LogSafetyCommands(
         "/home/yeon/IRC/IRC-STEP/Dynamics/safety_control/"
         "safety_all_theta_command_log.csv";
 
+    // The dry-run verification script rotates this file between commands.
+    // Check only when the motion command changes to avoid filesystem work in
+    // every control-loop iteration.
+    static int last_logged_go = -1;
+    if (go_ != last_logged_go)
+    {
+        if (safety_command_log_.is_open())
+        {
+            std::ifstream log_file(safety_command_log_path);
+            if (!log_file.good())
+            {
+                safety_command_log_.close();
+                safety_command_log_initialized_ = false;
+            }
+        }
+        last_logged_go = go_;
+    }
+
     if (!safety_command_log_initialized_)
     {
         safety_command_log_.open(safety_command_log_path);
