@@ -13,6 +13,25 @@ DEL_T_SECONDS = 0.01
 SAFETY_CONTROL_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = SAFETY_CONTROL_DIR / "gazebo_replay_logs"
 
+REPLAY_GUIDANCE = """
+Replay guidance:
+  The generated joint values come from safety_control's final All_Theta
+  (safe_*) commands. callback.cpp has already applied the real motor direction
+  signs to All_Theta. Do NOT pass --mirror-left-pitch-chain when replaying this
+  CSV, because that would apply an additional sign conversion.
+
+Recommended command:
+  python3 Simulation/Gazebo/scripts/replay_roll_joints_from_csv.py \\
+    Dynamics/safety_control/gazebo_replay_logs/command_32_gazebo_safe.csv \\
+    --mode legs \\
+    --relative-to-frame 0 \\
+    --use-gazebo-offsets \\
+    --start-frame 0 \\
+    --dt 0.05 \\
+    --hold-start 0.0 \\
+    --progress-every 50
+"""
+
 JOINT_MAPPING = {
     "RL0_wrap": "safe_0",
     "RL1_wrap": "safe_1",
@@ -33,7 +52,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Convert safety_control safe joint commands into Gazebo replay CSVs."
-        )
+        ),
+        epilog=REPLAY_GUIDANCE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--input", type=Path, help="One safety log CSV")
