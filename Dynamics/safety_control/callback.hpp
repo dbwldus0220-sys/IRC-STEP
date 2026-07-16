@@ -48,12 +48,22 @@ private:
     bool roll_rate_limit_initialized_ = false;
 #endif
 
+#ifdef STEP_ROLL_SCALE_TEST
+    VectorXd roll_scale_reference_ = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
+    bool roll_scale_reference_initialized_ = false;
+    int roll_scale_reference_command_ = -1;
+#endif
+
 #ifdef STEP_SAFETY_COMMAND_LOG
     std::ofstream safety_command_log_;
     std::uint64_t safety_command_log_frame_ = 0;
     bool safety_command_log_initialized_ = false;
     void LogSafetyCommands(
         const VectorXd& raw_all_theta,
+        const VectorXd& scaled_all_theta,
+        double roll_scale_right,
+        double roll_scale_left,
+        bool roll_scale_applied,
         const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
         bool roll_guard_enabled
     );

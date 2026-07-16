@@ -5,6 +5,8 @@ add_compile_definitions(STEP_ROLL_RATE_LIMIT_SAFETY)
 
 option(STEP_DRY_RUN_NO_DXL
   "Run safety_control_node without Dynamixel hardware communication" OFF)
+option(STEP_ROLL_SCALE_TEST
+  "Enable command-specific roll scale testing" OFF)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -44,6 +46,12 @@ if(STEP_DRY_RUN_NO_DXL)
   target_compile_definitions(safety_control_node PRIVATE STEP_DRY_RUN_NO_DXL=1)
   message(WARNING
     "STEP_DRY_RUN_NO_DXL is enabled: Dynamixel hardware communication is disabled")
+endif()
+
+if(STEP_ROLL_SCALE_TEST)
+  target_compile_definitions(safety_control_node PRIVATE STEP_ROLL_SCALE_TEST=1)
+  message(WARNING
+    "STEP_ROLL_SCALE_TEST is enabled: command-specific roll scaling is active")
 endif()
 
 target_include_directories(safety_control_node PRIVATE

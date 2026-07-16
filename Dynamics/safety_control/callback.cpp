@@ -855,6 +855,12 @@ void Callback::ResetMotion()
     roll_rate_limit_initialized_ = false;
 #endif
 
+#ifdef STEP_ROLL_SCALE_TEST
+    roll_scale_reference_.setZero();
+    roll_scale_reference_initialized_ = false;
+    roll_scale_reference_command_ = -1;
+#endif
+
 #ifdef STEP_SAFETY_COMMAND_LOG
     // Keep the command-log frame monotonic across motion resets so multiple
     // motions remain distinguishable in one CSV. Only the roll guard state
@@ -867,6 +873,10 @@ void Callback::ResetMotion()
 #ifdef STEP_SAFETY_COMMAND_LOG
 void Callback::LogSafetyCommands(
     const VectorXd& raw_all_theta,
+    const VectorXd& scaled_all_theta,
+    double roll_scale_right,
+    double roll_scale_left,
+    bool roll_scale_applied,
     const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
     bool roll_guard_enabled
 )
@@ -920,6 +930,13 @@ void Callback::LogSafetyCommands(
         {
             safety_command_log_ << ",raw_" << joint_index;
         }
+#ifdef STEP_ROLL_SCALE_TEST
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",scaled_" << joint_index;
+        }
+#endif
         for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
              ++joint_index)
         {
@@ -930,6 +947,22 @@ void Callback::LogSafetyCommands(
         {
             safety_command_log_ << ",delta_" << joint_index;
         }
+#ifdef STEP_ROLL_SCALE_TEST
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",scale_delta_" << joint_index;
+        }
+        for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+             ++joint_index)
+        {
+            safety_command_log_ << ",guard_delta_" << joint_index;
+        }
+        safety_command_log_
+            << ",roll_scale_right"
+            << ",roll_scale_left"
+            << ",roll_scale_applied";
+#endif
         safety_command_log_
             << ",roll_guard_enabled"
             << ",roll_guard_used_1"
@@ -950,6 +983,13 @@ void Callback::LogSafetyCommands(
     {
         safety_command_log_ << ',' << raw_all_theta[joint_index];
     }
+#ifdef STEP_ROLL_SCALE_TEST
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ',' << scaled_all_theta[joint_index];
+    }
+#endif
     for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
          ++joint_index)
     {
@@ -961,6 +1001,29 @@ void Callback::LogSafetyCommands(
         safety_command_log_ << ','
             << All_Theta[joint_index] - raw_all_theta[joint_index];
     }
+#ifdef STEP_ROLL_SCALE_TEST
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ','
+            << scaled_all_theta[joint_index] - raw_all_theta[joint_index];
+    }
+    for (int joint_index = 0; joint_index < NUMBER_OF_DYNAMIXELS;
+         ++joint_index)
+    {
+        safety_command_log_ << ','
+            << All_Theta[joint_index] - scaled_all_theta[joint_index];
+    }
+    safety_command_log_
+        << ',' << roll_scale_right
+        << ',' << roll_scale_left
+        << ',' << (roll_scale_applied ? 1 : 0);
+#else
+    (void)scaled_all_theta;
+    (void)roll_scale_right;
+    (void)roll_scale_left;
+    (void)roll_scale_applied;
+#endif
     safety_command_log_
         << ',' << (roll_guard_enabled ? 1 : 0)
         << ',' << (roll_guard_used[1] ? 1 : 0)
@@ -1188,8 +1251,50 @@ void Callback::Write_All_Theta()
     All_Theta[21] = pick_Ptr->NC_th[0] + 0 * DEG2RAD; // neck_RL
     All_Theta[22] = pick_Ptr->NC_th[1] - 24 * DEG2RAD; // neck_UD
 
-#ifdef STEP_SAFETY_COMMAND_LOG
+#if defined(STEP_SAFETY_COMMAND_LOG) || defined(STEP_ROLL_SCALE_TEST)
     const VectorXd raw_all_theta = All_Theta;
+#endif
+
+    double roll_scale_right = 1.0;
+    double roll_scale_left = 1.0;
+    bool roll_scale_applied = false;
+
+#ifdef STEP_ROLL_SCALE_TEST
+    if (go_ == 1 || go_ == 32)
+    {
+        roll_scale_right = 0.50;
+        roll_scale_left = 0.50;
+        roll_scale_applied = true;
+    }
+
+    if (!roll_scale_reference_initialized_
+        || roll_scale_reference_command_ != go_)
+    {
+        roll_scale_reference_ = raw_all_theta;
+        roll_scale_reference_initialized_ = true;
+        roll_scale_reference_command_ = go_;
+    }
+
+    constexpr int right_roll_joint_indices[] = {1, 5};
+    constexpr int left_roll_joint_indices[] = {7, 11};
+    for (int joint_index : right_roll_joint_indices)
+    {
+        All_Theta[joint_index] = roll_scale_reference_[joint_index]
+            + roll_scale_right
+                * (raw_all_theta[joint_index]
+                    - roll_scale_reference_[joint_index]);
+    }
+    for (int joint_index : left_roll_joint_indices)
+    {
+        All_Theta[joint_index] = roll_scale_reference_[joint_index]
+            + roll_scale_left
+                * (raw_all_theta[joint_index]
+                    - roll_scale_reference_[joint_index]);
+    }
+#endif
+
+#ifdef STEP_SAFETY_COMMAND_LOG
+    const VectorXd scaled_all_theta = All_Theta;
     std::array<bool, NUMBER_OF_DYNAMIXELS> roll_guard_used{};
 #endif
 
@@ -1235,6 +1340,10 @@ void Callback::Write_All_Theta()
 #endif
     LogSafetyCommands(
         raw_all_theta,
+        scaled_all_theta,
+        roll_scale_right,
+        roll_scale_left,
+        roll_scale_applied,
         roll_guard_used,
         roll_guard_enabled
     );
