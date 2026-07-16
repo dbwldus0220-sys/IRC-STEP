@@ -188,7 +188,7 @@ inline bool last_LL_convergence_fallback_used = false;
 #endif
 
 // th: [6x1], link: [7x1], PR: [6x1] (x, y, z, roll, pitch, yaw)
-void BRP_RL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR){
+inline void BRP_RL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR){
 
     double t1 = th(0), t2 = th(1), t3 = th(2), t4 = th(3), t5 = th(4), t6 = th(5);
     double L0 = link(0), L1 = link(1), L2 = link(2), L3 = link(3), L4 = link(4), L5 = link(5), L6 = link(6);
@@ -231,7 +231,7 @@ void BRP_RL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR){
 }
 
 
-void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const VectorXd& link, VectorXd& IK_theta)
+inline void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const VectorXd& link, VectorXd& IK_theta)
 {    
     const int dof = 6;
     Eigen::VectorXd th = init_theta;
@@ -613,7 +613,7 @@ void BRP_RL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const Vect
     }
 }
 
-void BRP_LL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR)
+inline void BRP_LL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR)
 {
     double t1 = th(0), t2 = th(1), t3 = th(2), t4 = th(3), t5 = th(4), t6 = th(5);
     double L0 = link(0), L1 = link(1), L2 = link(2), L3 = link(3), L4 = link(4), L5 = link(5), L6 = link(6);
@@ -655,7 +655,7 @@ void BRP_LL_FK(const VectorXd& th, const VectorXd& link, VectorXd& PR)
 }
 
 
-void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const VectorXd& link, VectorXd& IK_theta)
+inline void BRP_LL_IK(const VectorXd& target_PR, const VectorXd& init_theta, const VectorXd& link, VectorXd& IK_theta)
 {    
     const int dof = 6;
     Eigen::VectorXd th = init_theta;
