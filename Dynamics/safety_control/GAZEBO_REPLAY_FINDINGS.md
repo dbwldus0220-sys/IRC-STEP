@@ -254,3 +254,30 @@ Judgment:
 
 - Ankle roll passive damping alone is not the main cause of the command_3 shaking.
 - Together with the ankle-roll-stiff test, this suggests that the remaining command_3 shaking is likely related to foot-ground contact, collision/friction modeling, trajectory/contact timing, or Gazebo base constraint effects rather than simple ankle roll controller weakness.
+
+
+#### command_2 joint tracking comparison
+
+A command_2 replay tracking test was performed using the same joint-state logging setup as command_3.
+
+Result:
+
+- right_ankle_roll_joint
+  - max error ≈ 0.163 rad
+  - mean error ≈ 0.072 rad
+- left_ankle_roll_joint
+  - max error ≈ 0.162 rad
+  - mean error ≈ 0.073 rad
+- hip yaw / hip roll tracking errors remained small.
+
+Observation:
+
+- command_2 showed a similar ankle roll tracking error pattern to command_3.
+- The ankle roll max error was even slightly larger than command_3 in this replay.
+- Hip yaw and hip roll tracking errors were still small.
+
+Judgment:
+
+- The remaining shaking is not unique to command_3.
+- The issue is more likely related to the step-in-place / turn-type motion family, foot-ground contact, collision/friction modeling, or Gazebo base constraint effects.
+- Further tuning of command_3-only compensation is unlikely to be efficient at this stage.
