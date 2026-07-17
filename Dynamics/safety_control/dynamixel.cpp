@@ -39,7 +39,8 @@ Dxl::Dxl()
            "port access, configuration, reads, and writes."
         << std::endl;
 #ifndef STEP_REAL_ROBOT_STARTUP_SAFE
-    hardware_prepared_ = true;
+    hardware_configured_ = true;
+    torque_enabled_ = true;
 #else
     std::cout
         << "[STARTUP_SAFE] Dry-run hardware prepare is deferred until command 90."
@@ -66,29 +67,32 @@ Dxl::Dxl()
         std::cout << "[Info] Succeeded to set the baudrate!" << std::endl;
 
 #ifndef STEP_REAL_ROBOT_STARTUP_SAFE
-    PrepareHardware();
+    ConfigureHardware();
 #else
     std::cout
-        << "[STARTUP_SAFE] Register writes are deferred. Send command 90 "
-           "to prepare hardware and move to WALK_READY."
+        << "[STARTUP_SAFE] Register writes and startup motion are deferred. "
+           "Run commands 90 through 93 in order."
         << std::endl;
 #endif
 #endif
 }
 
-bool Dxl::PrepareHardware()
+bool Dxl::ConfigureHardware()
 {
-    if (hardware_prepared_)
+    if (hardware_configured_)
     {
-        std::cout << "[STARTUP_SAFE] Hardware is already prepared." << std::endl;
+        std::cout << "[STARTUP_SAFE] Hardware is already configured." << std::endl;
         return true;
     }
 
 #ifdef STEP_DRY_RUN_NO_DXL
     SetPresentMode(Mode);
-    hardware_prepared_ = true;
+    hardware_configured_ = true;
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
+    torque_enabled_ = true;
+#endif
     std::cout
-        << "[STARTUP_SAFE][Dry-run] Hardware prepare completed without "
+        << "[STARTUP_SAFE][Dry-run] Hardware configure completed without "
            "Dynamixel packets."
         << std::endl;
     return true;
@@ -96,7 +100,6 @@ bool Dxl::PrepareHardware()
     uint8_t dxl_error = 0;
     int dxl_comm_result = COMM_TX_FAIL;
     bool prepare_succeeded = true;
-    hardware_prepare_attempted_ = true;
 
 #ifdef STEP_REAL_ROBOT_STARTUP_SAFE
     if (!communication_ready_)
@@ -106,7 +109,11 @@ bool Dxl::PrepareHardware()
             << std::endl;
         return false;
     }
+#endif
 
+    hardware_prepare_attempted_ = true;
+
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
     for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
     {
         dxl_comm_result = packetHandler->write1ByteTxRx(
@@ -205,46 +212,77 @@ bool Dxl::PrepareHardware()
     SetPIDGain(PID_Gain);
     std::cout << "[DXL_PACKET] position_pid P=850 I=0 D=0" << std::endl;
 
-#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
-    if (prepare_succeeded)
-    {
-        const VectorXd current_theta = read_rad();
-        SetThetaRef(current_theta);
-        syncWriteTheta();
-        std::cout
-            << "[STARTUP_SAFE] Present position was preloaded as goal before torque enable."
-            << std::endl;
-
-        for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
-        {
-            dxl_comm_result = packetHandler->write1ByteTxRx(
-                portHandler, dxl_id[i], DxlReg_TorqueEnable, 1, &dxl_error);
-            std::cout << "[DXL_PACKET] torque_enable=1 ID=" << int(dxl_id[i])
-                      << std::endl;
-            if (dxl_comm_result != COMM_SUCCESS)
-            {
-                std::cerr << "[Error] Failed to enable torque for ID: "
-                          << int(dxl_id[i]) << std::endl;
-                prepare_succeeded = false;
-            }
-        }
-    }
+    hardware_configured_ = prepare_succeeded;
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
+    torque_enabled_ = prepare_succeeded;
 #endif
-
-    hardware_prepared_ = prepare_succeeded;
-    if (!hardware_prepared_)
+    if (!hardware_configured_)
     {
         std::cerr
-            << "[STARTUP_SAFE] Hardware prepare failed; motion remains blocked."
+            << "[STARTUP_SAFE] Hardware configure failed; next stage remains blocked."
             << std::endl;
     }
-    return hardware_prepared_;
+    return hardware_configured_;
+#endif
+}
+
+bool Dxl::PreloadAndEnableTorque()
+{
+    if (torque_enabled_)
+    {
+        std::cout << "[STARTUP_SAFE] Torque is already enabled." << std::endl;
+        return true;
+    }
+    if (!hardware_configured_)
+    {
+        std::cerr
+            << "[STARTUP_SAFE] Torque enable rejected: hardware is not configured."
+            << std::endl;
+        return false;
+    }
+
+#ifdef STEP_DRY_RUN_NO_DXL
+    torque_enabled_ = true;
+    std::cout
+        << "[STARTUP_SAFE][Dry-run] Present-position preload and torque enable "
+           "completed without Dynamixel packets."
+        << std::endl;
+    return true;
+#else
+    std::cout
+        << "[STARTUP_SAFE][TODO] read_rad() does not yet validate every "
+           "Dynamixel response; verify all joint positions before real-robot use."
+        << std::endl;
+    const VectorXd current_theta = read_rad();
+    SetThetaRef(current_theta);
+    syncWriteTheta();
+    std::cout
+        << "[STARTUP_SAFE] Present position was preloaded as goal before torque enable."
+        << std::endl;
+
+    uint8_t dxl_error = 0;
+    bool enable_succeeded = true;
+    for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+    {
+        const int result = packetHandler->write1ByteTxRx(
+            portHandler, dxl_id[i], DxlReg_TorqueEnable, 1, &dxl_error);
+        std::cout << "[DXL_PACKET] torque_enable=1 ID=" << int(dxl_id[i])
+                  << std::endl;
+        if (result != COMM_SUCCESS)
+        {
+            std::cerr << "[Error] Failed to enable torque for ID: "
+                      << int(dxl_id[i]) << std::endl;
+            enable_succeeded = false;
+        }
+    }
+    torque_enabled_ = enable_succeeded;
+    return torque_enabled_;
 #endif
 }
 
 bool Dxl::IsHardwarePrepared() const
 {
-    return hardware_prepared_;
+    return torque_enabled_;
 }
 
 Dxl::~Dxl()

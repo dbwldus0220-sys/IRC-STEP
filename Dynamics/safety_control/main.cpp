@@ -58,7 +58,7 @@ public:
         RCLCPP_WARN(
             this->get_logger(),
             "[STARTUP_SAFE] Automatic torque enable, PID write, CENTER, and "
-            "WALK_READY are disabled. Send command 90 when physically ready."
+            "WALK_READY are disabled. Run commands 90, 91, 92, and 93 in order."
         );
 #endif
 
@@ -94,6 +94,19 @@ public:
     }
 
 private:
+
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+    enum class StartupStage
+    {
+        PortReady,
+        Configured,
+        TorqueEnabled,
+        Centered,
+        WalkReady
+    };
+
+    StartupStage startup_stage_ = StartupStage::PortReady;
+#endif
 
     
     std::atomic<int> turns_remaining_{0};
@@ -188,12 +201,15 @@ private:
         RCLCPP_INFO(this->get_logger(), "command=%d, angle=%d", msg->command,msg->angle);
 
 #ifdef STEP_REAL_ROBOT_COMMAND_GATE
-        constexpr int approved_normal_command = 1;
-        constexpr int hardware_prepare_command = 90;
-        constexpr int emergency_stop_command = 98;
-        if (msg->command != approved_normal_command
-            && msg->command != hardware_prepare_command
-            && msg->command != emergency_stop_command)
+        bool command_gate_allowed = msg->command == 1 || msg->command == 98;
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+        command_gate_allowed = command_gate_allowed
+            || msg->command == 90
+            || msg->command == 91
+            || msg->command == 92
+            || msg->command == 93;
+#endif
+        if (!command_gate_allowed)
         {
             RCLCPP_ERROR(
                 this->get_logger(),
@@ -281,7 +297,15 @@ private:
 
             case 33: command_ = 33; break; //Step_In_Place
 
-            case 90: command_ = 90; break; // Hardware prepare / WALK_READY
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+            case 90: command_ = 90; break; // Hardware configure
+
+            case 91: command_ = 91; break; // Present-position preload / torque enable
+
+            case 92: command_ = 92; break; // Move to CENTER
+
+            case 93: command_ = 93; break; // Move to WALK_READY
+#endif
 
             case 77: command_ = 77; recovery_mode = true; break; //recovery
 
@@ -308,50 +332,143 @@ private:
 #ifdef STEP_REAL_ROBOT_STARTUP_SAFE
         if (command_ == 90)
         {
-            if (dxl_->IsHardwarePrepared())
+            if (startup_stage_ >= StartupStage::Configured)
             {
                 RCLCPP_WARN(
                     this->get_logger(),
-                    "[STARTUP_SAFE] command_90 ignored: hardware is already prepared"
+                    "[STARTUP_SAFE] command_90 ignored: hardware is already configured"
                 );
                 return;
             }
             RCLCPP_WARN(
                 this->get_logger(),
-                "[STARTUP_SAFE] command_90 accepted: hardware prepare and "
-                "startup posture motion will begin"
+                "[STARTUP_SAFE] command_90 accepted: configure hardware"
             );
-            if (!dxl_->PrepareHardware())
+            if (!dxl_->ConfigureHardware())
             {
                 RCLCPP_ERROR(
                     this->get_logger(),
-                    "[STARTUP_SAFE] Hardware prepare failed; CENTER/WALK_READY skipped"
+                    "[STARTUP_SAFE] command_90 failed: hardware configure failed"
                 );
                 return;
             }
+            startup_stage_ = StartupStage::Configured;
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] stage=Configured");
+            return;
+        }
 
-            VectorXd theta_zero = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
-            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] Moving to CENTER");
-            dxl_->MoveToTargetSmoothCos(theta_zero, 150, 10);
-            LogDofSnapshot("CENTER");
-
-            callback_->Set();
-            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] Moving to WALK_READY");
-            dxl_->MoveToTargetSmoothCos(callback_->All_Theta, 150, 10);
-            LogDofSnapshot("WALK_READY");
+        if (command_ == 91)
+        {
+            if (startup_stage_ < StartupStage::Configured)
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_91 blocked: hardware_not_configured; "
+                    "send command 90 first"
+                );
+                return;
+            }
+            if (startup_stage_ >= StartupStage::TorqueEnabled)
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_91 ignored: torque stage already completed"
+                );
+                return;
+            }
             RCLCPP_WARN(
                 this->get_logger(),
-                "[STARTUP_SAFE] Hardware prepare complete; normal motion is enabled"
+                "[STARTUP_SAFE] command_91 accepted: preload and torque enable"
+            );
+            if (!dxl_->PreloadAndEnableTorque())
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_91 failed: preload_or_torque_enable_failed"
+                );
+                return;
+            }
+            startup_stage_ = StartupStage::TorqueEnabled;
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] stage=TorqueEnabled");
+            return;
+        }
+
+        if (command_ == 92)
+        {
+            if (startup_stage_ < StartupStage::TorqueEnabled)
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_92 blocked: torque_not_enabled; "
+                    "send command 91 first"
+                );
+                return;
+            }
+            if (startup_stage_ >= StartupStage::Centered)
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_92 ignored: CENTER already completed"
+                );
+                return;
+            }
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STARTUP_SAFE] command_92 accepted: move to CENTER"
+            );
+            VectorXd theta_zero = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
+            dxl_->MoveToTargetSmoothCos(theta_zero, 150, 10);
+            LogDofSnapshot("CENTER");
+            startup_stage_ = StartupStage::Centered;
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] stage=Centered");
+            return;
+        }
+
+        if (command_ == 93)
+        {
+            if (startup_stage_ < StartupStage::Centered)
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_93 blocked: center_not_completed; "
+                    "send command 92 first"
+                );
+                return;
+            }
+            if (startup_stage_ >= StartupStage::WalkReady)
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_93 ignored: WALK_READY already completed"
+                );
+                return;
+            }
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STARTUP_SAFE] command_93 accepted: move to WALK_READY"
+            );
+            callback_->Set();
+            dxl_->MoveToTargetSmoothCos(callback_->All_Theta, 150, 10);
+            LogDofSnapshot("WALK_READY");
+            startup_stage_ = StartupStage::WalkReady;
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] stage=WalkReady");
+            return;
+        }
+
+        if (command_ == 1 && startup_stage_ < StartupStage::WalkReady)
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "[STARTUP_SAFE] command_1 blocked: walk_ready_not_completed"
             );
             return;
         }
 
-        if (command_ != 98 && !dxl_->IsHardwarePrepared())
+        if (command_ != 98 && startup_stage_ < StartupStage::WalkReady)
         {
             RCLCPP_ERROR(
                 this->get_logger(),
-                "[STARTUP_SAFE] blocked command=%d, reason=hardware_not_prepared; "
-                "send command 90 first",
+                "[STARTUP_SAFE] blocked command=%d, reason=walk_ready_not_completed",
                 command_
             );
             return;

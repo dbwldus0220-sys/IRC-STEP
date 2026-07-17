@@ -93,6 +93,19 @@ Decision:
 
 ## Real-robot pre-test checklist
 
+### Startup-safe staged prepare limitation
+
+With `STEP_REAL_ROBOT_STARTUP_SAFE=ON`, run startup commands strictly in this
+order: command_90 (configure), command_91 (present-position preload and torque
+enable), command_92 (CENTER), and command_93 (WALK_READY). Normal motion must
+remain blocked until command_93 completes.
+
+`Dxl::read_rad()` currently reads each present-position register without
+checking every SDK communication result or confirming that data is available.
+Before real-robot use, add per-ID response validation and prevent torque enable
+if any joint position is missing or invalid. Until then, command_91 must be
+tested with the robot physically supported and emergency power-off reachable.
+
 Before enabling Dynamixel communication:
 
 - [ ] Confirm the robot is physically supported or held safely.
@@ -166,3 +179,44 @@ Important real-robot note:
 - `command_90` is the hardware activation command.
 - On the real robot, command_90 may enable torque, write operating mode/PID settings, preload present position, and move through CENTER and WALK_READY.
 - command_90 must only be tested with the robot physically supported and emergency power-off available.
+
+
+## Startup safe staged verification
+
+`STEP_REAL_ROBOT_STARTUP_SAFE` was updated so that real-robot startup preparation is split across commands 90 through 93.
+
+Staged startup commands:
+
+| Command | Meaning | Resulting stage |
+|---|---|---|
+| command_90 | Hardware configure: torque OFF, operating mode, LED, PID setup | Configured |
+| command_91 | Present-position preload and torque enable | TorqueEnabled |
+| command_92 | Move to CENTER | Centered |
+| command_93 | Move to WALK_READY | WalkReady |
+
+Dry-run verification confirmed:
+
+- command_1 before command_93 was blocked with `walk_ready_not_completed`.
+- command_92 before command_91 was blocked with `torque_not_enabled`.
+- command_90 completed and advanced to `Configured`.
+- command_91 completed and advanced to `TorqueEnabled`.
+- command_92 completed and advanced to `Centered`.
+- command_93 completed and advanced to `WalkReady`.
+- command_1 was allowed only after `WalkReady`.
+- command_2, command_3, and command_32 remained blocked by `STEP_REAL_ROBOT_COMMAND_GATE`.
+
+Command_1 verification after staged startup:
+
+- `safety_all_theta_command_log.csv` was generated.
+- rows: 540
+- right roll scale: 0.5
+- left roll scale: 0.5
+- roll scale was applied to all command_1 rows.
+
+Important real-robot note:
+
+- command_90 writes configuration registers.
+- command_91 enables torque.
+- command_92 is currently the riskiest stage because it moves the whole robot to CENTER.
+- command_93 moves from CENTER to WALK_READY.
+- Actual robot testing must use physical support and emergency power-off.
