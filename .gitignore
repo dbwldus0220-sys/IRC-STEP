@@ -6,3 +6,17 @@ Dynamics/STEP_Dynamcis.cpp
 Dynamics/single_motor_test
 Dynamics/step_debug_original
 Dynamics/step_debug_rate005
+
+# ROS2 / colcon build artifacts
+build/
+install/
+log/
+
+Dynamics/build/
+Dynamics/install/
+Dynamics/log/
+
+# safety_control generated logs
+Dynamics/safety_control/dry_run_logs/
+Dynamics/safety_control/gazebo_replay_logs/
+Dynamics/safety_control/safety_all_theta_command_log.csv
