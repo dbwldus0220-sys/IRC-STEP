@@ -1260,7 +1260,7 @@ void Callback::Write_All_Theta()
     bool roll_scale_applied = false;
 
 #ifdef STEP_ROLL_SCALE_TEST
-    if (go_ == 1 || go_ == 32)
+    if (go_ == 1)
     {
         roll_scale_right = 0.50;
         roll_scale_left = 0.50;

@@ -60,14 +60,14 @@ Gazebo leg joint 매핑은 다음과 같다.
 - 실제 로봇 적용 전에는 `STEP_ROLL_SCALE_TEST`와 같은 compile-time 또는 runtime 테스트 옵션으로만 검증한다.
 - Scale 변경은 먼저 dry-run CSV와 Gazebo에서 확인하고, 관절별 step, 전체 자세, 지면 접촉 및 균형 영향을 함께 검토한다.
 
-#### command_1 follow-up conclusion
+#### command_1 final check
 
-- command_1에 roll50을 적용한 코드 적용본을 확인했다.
-- 원본 대비 초반 오른다리 lateral kick이 확실히 줄었다.
-- 움직임 크기는 크게 죽지 않았다.
-- 한 바퀴 회전이나 급격한 꺾임은 보이지 않았다.
-- roll range ratio는 약 0.5로 확인되었다.
-- command_1은 현재 roll50 적용 후보로 유지한다.
+- STEP_ROLL_SCALE_TEST 적용 범위를 command_1 전용으로 줄인 뒤 다시 Gazebo replay를 확인했다.
+- command_1에는 right=0.5, left=0.5 roll scale이 적용되었다.
+- 초반 오른다리 lateral kick은 사라졌다.
+- 다리가 아주 살짝 비틀리는 느낌은 남아 있었지만, 움직임이 크게 죽지는 않았다.
+- 급격한 꺾임이나 한 바퀴 회전은 보이지 않았다.
+- command_1 전용 roll50은 현재 적용 후보로 유지한다.
 
 
 
