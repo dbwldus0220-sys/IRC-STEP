@@ -162,6 +162,22 @@ private:
     void MotionCallback(const robot_msgs::msg::MotionCommand::SharedPtr msg)        
     {
         RCLCPP_INFO(this->get_logger(), "command=%d, angle=%d", msg->command,msg->angle);
+
+#ifdef STEP_REAL_ROBOT_COMMAND_GATE
+        constexpr int approved_normal_command = 1;
+        constexpr int emergency_stop_command = 98;
+        if (msg->command != approved_normal_command
+            && msg->command != emergency_stop_command)
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "[COMMAND_GATE] blocked command=%d, "
+                "reason=not_approved_for_real_robot_test",
+                msg->command
+            );
+            return;
+        }
+#endif
         
         int command_ = 0;
         int angle_ = 0;

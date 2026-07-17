@@ -105,3 +105,34 @@ Before enabling Dynamixel communication:
 - [ ] Confirm command_2, command_3, and command_32 are not accidentally selected for normal motion.
 - [ ] Start with low-risk posture or single-motion test, not continuous walking.
 - [ ] Stop immediately if one leg kicks laterally, twists, or bends unexpectedly.
+
+## Command gate dry-run verification result
+
+`STEP_REAL_ROBOT_COMMAND_GATE` was verified with dry-run mode.
+
+Build options:
+
+- `STEP_DRY_RUN_NO_DXL=ON`
+- `STEP_ROLL_SCALE_TEST=ON`
+- `STEP_REAL_ROBOT_COMMAND_GATE=ON`
+
+Verification command:
+
+```bash
+python3 safety_control/scripts/verify_dry_run.py --expect-gate --commands 1 2 3 32
+
+Result:
+
+command_1: ALLOWED
+rows: 540
+roll guard used sum for roll joints 1, 5, 7, 11: 0
+max_safe_step was reduced compared to max_raw_step, as expected from command_1 roll50.
+command_2: BLOCKED_EXPECTED
+command_3: BLOCKED_EXPECTED
+command_32: BLOCKED_EXPECTED
+
+Conclusion:
+
+The command gate correctly allows only command_1.
+command_2, command_3, and command_32 are blocked when STEP_REAL_ROBOT_COMMAND_GATE=ON.
+command_1 roll50 works without triggering the roll guard.

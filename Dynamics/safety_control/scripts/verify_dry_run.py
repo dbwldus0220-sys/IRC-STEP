@@ -12,6 +12,7 @@ import pandas as pd
 
 
 DEFAULT_COMMANDS = [1, 2, 3, 5, 6, 7, 8, 13, 14, 25, 32]
+EXPECTED_GATE_BLOCKED_COMMANDS = {2, 3, 32}
 ROLL_JOINTS = [1, 5, 7, 11]
 SAFETY_CONTROL_DIR = Path(__file__).resolve().parents[1]
 SOURCE_LOG = SAFETY_CONTROL_DIR / "safety_all_theta_command_log.csv"
@@ -43,6 +44,14 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=180.0,
         help="Maximum seconds to wait for CSV writing to stop (default: 180)",
+    )
+    parser.add_argument(
+        "--expect-gate",
+        action="store_true",
+        help=(
+            "Expect commands 2, 3, and 32 to be blocked by "
+            "STEP_REAL_ROBOT_COMMAND_GATE"
+        ),
     )
     return parser.parse_args()
 
@@ -148,15 +157,32 @@ def main() -> int:
 
     for command in args.commands:
         destination = OUTPUT_DIR / f"command_{command}.csv"
+        expected_blocked = (
+            args.expect_gate and command in EXPECTED_GATE_BLOCKED_COMMANDS
+        )
+        if expected_blocked:
+            destination.unlink(missing_ok=True)
         SOURCE_LOG.unlink(missing_ok=True)
         print(f"[INFO] Publishing command {command}")
         publish_command(command)
         time.sleep(args.wait_seconds)
+
+        if expected_blocked and not (
+            SOURCE_LOG.is_file() and SOURCE_LOG.stat().st_size > 0
+        ):
+            print(f"[PASS] command_{command}: BLOCKED_EXPECTED (no CSV created)")
+            continue
+
         wait_for_log()
+        if expected_blocked:
+            raise ValueError(
+                f"command_{command} was expected to be blocked, but CSV was created: "
+                f"{SOURCE_LOG}"
+            )
         wait_until_log_is_idle(args.motion_timeout)
         shutil.copy2(SOURCE_LOG, destination)
         summaries.append(analyze_command(command, destination))
-        print(f"[INFO] Saved {destination}")
+        print(f"[PASS] command_{command}: ALLOWED (saved {destination})")
 
     summary_path = OUTPUT_DIR / "summary.csv"
     pd.DataFrame(summaries).to_csv(summary_path, index=False)

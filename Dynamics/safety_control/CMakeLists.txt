@@ -7,6 +7,8 @@ option(STEP_DRY_RUN_NO_DXL
   "Run safety_control_node without Dynamixel hardware communication" OFF)
 option(STEP_ROLL_SCALE_TEST
   "Enable command-specific roll scale testing" OFF)
+option(STEP_REAL_ROBOT_COMMAND_GATE
+  "Allow only real-robot commands approved by the pre-check" OFF)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -52,6 +54,13 @@ if(STEP_ROLL_SCALE_TEST)
   target_compile_definitions(safety_control_node PRIVATE STEP_ROLL_SCALE_TEST=1)
   message(WARNING
     "STEP_ROLL_SCALE_TEST is enabled: command-specific roll scaling is active")
+endif()
+
+if(STEP_REAL_ROBOT_COMMAND_GATE)
+  target_compile_definitions(
+    safety_control_node PRIVATE STEP_REAL_ROBOT_COMMAND_GATE=1)
+  message(WARNING
+    "STEP_REAL_ROBOT_COMMAND_GATE is enabled: only approved normal commands are allowed")
 endif()
 
 target_include_directories(safety_control_node PRIVATE
