@@ -11,6 +11,8 @@ option(STEP_COMMAND32_START_BLEND_TEST
   "Use a command_1-style start trajectory during command_32's first cycle" OFF)
 option(STEP_COMMAND32_COMPENSATION_TEST
   "Ramp command_32 startup compensation over its first 135 frames" OFF)
+option(STEP_COMMAND3_COMPENSATION_TEST
+  "Disable command_3 angle compensation for isolation testing" OFF)
 option(STEP_REAL_ROBOT_COMMAND_GATE
   "Allow only real-robot commands approved by the pre-check" OFF)
 option(STEP_REAL_ROBOT_STARTUP_SAFE
@@ -74,6 +76,13 @@ if(STEP_COMMAND32_COMPENSATION_TEST)
     safety_control_node PRIVATE STEP_COMMAND32_COMPENSATION_TEST=1)
   message(WARNING
     "STEP_COMMAND32_COMPENSATION_TEST is enabled: command_32 startup compensation isolation is active")
+endif()
+
+if(STEP_COMMAND3_COMPENSATION_TEST)
+  target_compile_definitions(
+    safety_control_node PRIVATE STEP_COMMAND3_COMPENSATION_TEST=1)
+  message(WARNING
+    "STEP_COMMAND3_COMPENSATION_TEST is enabled: command_3 angle compensation isolation is active")
 endif()
 
 if(STEP_REAL_ROBOT_COMMAND_GATE)

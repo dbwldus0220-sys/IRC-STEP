@@ -20,3 +20,11 @@ Dynamics/log/
 Dynamics/safety_control/dry_run_logs/
 Dynamics/safety_control/gazebo_replay_logs/
 Dynamics/safety_control/safety_all_theta_command_log.csv
+
+# Gazebo replay generated logs
+gazebo_joint_tracking_log.csv
+**/gazebo_joint_tracking_log.csv
+
+# Python cache
+__pycache__/
+**/__pycache__/

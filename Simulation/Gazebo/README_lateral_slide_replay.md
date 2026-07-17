@@ -56,3 +56,23 @@ base_lateral_cmd = scale * axis_sign * (value - value_at_base_frame)
 selected replay frame is used. STEP debug CSV files currently store `COM_y` in
 meters; values that clearly look like millimeters are converted to meters by the
 script and the detected unit is printed at startup.
+
+## Lock the diagnostic base lateral joint
+
+To replay all 12 leg joints while commanding the diagnostic base lateral joint
+to remain at zero on every frame:
+
+```bash
+python3 Simulation/Gazebo/scripts/replay_roll_joints_from_csv.py \
+  Dynamics/safety_control/safety_all_theta_command_log.csv \
+  --mode legs \
+  --lock-base-lateral \
+  --start-frame 0 \
+  --end-frame 500 \
+  --dt 0.01
+```
+
+`--lock-base-lateral` cannot be combined with
+`--replay-base-lateral-from-com-y`. If the optional lateral controller topic is
+missing or publishing fails, the script prints a warning and continues replaying
+the selected leg joints.

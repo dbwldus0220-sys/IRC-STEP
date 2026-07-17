@@ -85,6 +85,8 @@ private:
         bool command32_compensation_test,
         double command32_compensation_scale,
         const char* command32_compensation_phase,
+        bool command3_compensation_test,
+        double command3_compensation_scale,
         const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
         bool roll_guard_enabled
     );

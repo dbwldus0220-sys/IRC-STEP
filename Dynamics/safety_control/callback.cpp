@@ -958,6 +958,8 @@ void Callback::LogSafetyCommands(
     bool command32_compensation_test,
     double command32_compensation_scale,
     const char* command32_compensation_phase,
+    bool command3_compensation_test,
+    double command3_compensation_scale,
     const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
     bool roll_guard_enabled
 )
@@ -1058,6 +1060,8 @@ void Callback::LogSafetyCommands(
             << ",command32_compensation_test"
             << ",command32_compensation_scale"
             << ",command32_compensation_phase"
+            << ",command3_compensation_test"
+            << ",command3_compensation_scale"
             << ",roll_guard_enabled"
             << ",roll_guard_used_1"
             << ",roll_guard_used_5"
@@ -1132,6 +1136,8 @@ void Callback::LogSafetyCommands(
         << ',' << (command32_compensation_test ? 1 : 0)
         << ',' << command32_compensation_scale
         << ',' << command32_compensation_phase
+        << ',' << (command3_compensation_test ? 1 : 0)
+        << ',' << command3_compensation_scale
         << ',' << (roll_guard_enabled ? 1 : 0)
         << ',' << (roll_guard_used[1] ? 1 : 0)
         << ',' << (roll_guard_used[5] ? 1 : 0)
@@ -1148,6 +1154,8 @@ void Callback::Write_All_Theta()
     bool command32_compensation_test = false;
     double command32_compensation_scale = 1.0;
     const char* command32_compensation_phase = "full";
+    bool command3_compensation_test = false;
+    double command3_compensation_scale = 1.0;
 
     if (emergency == 0)
     {
@@ -1197,7 +1205,49 @@ void Callback::Write_All_Theta()
             else if (go == 3 || go == 30)//Step_in_place 우회전, forward_right
             {
                 IK_Ptr->BRP_Simulation(trajectoryPtr->Ref_RL_x, trajectoryPtr->Ref_RL_y, trajectoryPtr->Ref_RL_z, trajectoryPtr->Ref_LL_x, trajectoryPtr->Ref_LL_y, trajectoryPtr->Ref_LL_z, indext);
+#ifdef STEP_COMMAND3_COMPENSATION_TEST
+                if (go == 3)
+                {
+                    constexpr double COMMAND3_COMPENSATION_SCALE = 0.0;
+                    command3_compensation_test = true;
+                    command3_compensation_scale =
+                        COMMAND3_COMPENSATION_SCALE;
+
+                    double rl_before_compensation[6];
+                    double ll_before_compensation[6];
+                    for (int joint_index = 0; joint_index < 6; ++joint_index)
+                    {
+                        rl_before_compensation[joint_index] =
+                            IK_Ptr->RL_th[joint_index];
+                        ll_before_compensation[joint_index] =
+                            IK_Ptr->LL_th[joint_index];
+                    }
+
+                    IK_Ptr->Angle_Compensation(
+                        indext, trajectoryPtr->Ref_RL_x.cols());
+
+                    for (int joint_index = 0; joint_index < 6; ++joint_index)
+                    {
+                        IK_Ptr->RL_th[joint_index] =
+                            rl_before_compensation[joint_index]
+                            + command3_compensation_scale
+                                * (IK_Ptr->RL_th[joint_index]
+                                    - rl_before_compensation[joint_index]);
+                        IK_Ptr->LL_th[joint_index] =
+                            ll_before_compensation[joint_index]
+                            + command3_compensation_scale
+                                * (IK_Ptr->LL_th[joint_index]
+                                    - ll_before_compensation[joint_index]);
+                    }
+                }
+                else
+                {
+                    IK_Ptr->Angle_Compensation(
+                        indext, trajectoryPtr->Ref_RL_x.cols());
+                }
+#else
                 IK_Ptr->Angle_Compensation(indext, trajectoryPtr->Ref_RL_x.cols());
+#endif
 
                 // std::cout << "indext" << indext << std::endl;
                 if(indext>=67 && indext <=337)
@@ -1550,6 +1600,8 @@ void Callback::Write_All_Theta()
         command32_compensation_test,
         command32_compensation_scale,
         command32_compensation_phase,
+        command3_compensation_test,
+        command3_compensation_scale,
         roll_guard_used,
         roll_guard_enabled
     );
