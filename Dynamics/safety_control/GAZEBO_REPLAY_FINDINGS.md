@@ -141,3 +141,116 @@ Judgment:
 - This is the best command_32 candidate so far.
 - The remaining slight leg bending is acceptable for the current Gazebo-level check.
 - Further tuning should focus on real-robot validation or detailed posture tuning, not more aggressive suppression of the command.
+
+
+### command_3 twist follow-up
+
+Command_3 compensation-off replay did not clearly reduce the lateral twist.
+
+Visual observation suggested that the pelvis/hip chain was not being held rigidly enough during replay, rather than a single trajectory discontinuity.
+
+Gazebo controller inspection showed:
+- hip and ankle joints use the same PID gains: P=20, I=0, D=1
+- effort limit is 8.4 N·m
+- passive damping/friction are not explicitly configured
+- hip yaw/roll/pitch use the same gains as ankle joints despite larger downstream inertia
+
+Current judgment:
+- command_3 twist should not yet be treated as a trajectory bug.
+- Gazebo hip controller stiffness / damping / tracking error must be checked first.
+- Next checks:
+  1. log command vs actual joint positions
+  2. test higher hip PID gain model
+  3. test small passive damping model
+
+
+#### command_3 ankle roll stiff test
+
+An ankle-roll-only PID gain test was performed to check whether the remaining command_3 leg shaking was caused by weak ankle roll position control.
+
+Test setup:
+
+- Base model: joint-state replay test model
+- Target joints:
+  - right_ankle_roll_joint
+  - left_ankle_roll_joint
+- Original gain:
+  - P=20, I=0, D=1
+- Test gain:
+  - P=60, I=0, D=3
+- Replay:
+  - command_3
+  - hold-start = 2.0 s
+  - joint tracking topic: `/step/leg_joint_states`
+
+Baseline tracking result:
+
+- right_ankle_roll_joint
+  - max error ≈ 0.145 rad
+  - mean error ≈ 0.078 rad
+- left_ankle_roll_joint
+  - max error ≈ 0.146 rad
+  - mean error ≈ 0.081 rad
+
+Ankle-roll-stiff result:
+
+- right_ankle_roll_joint
+  - max error ≈ 0.144 rad
+  - mean error ≈ 0.065 rad
+- left_ankle_roll_joint
+  - max error ≈ 0.134 rad
+  - mean error ≈ 0.064 rad
+
+Observation:
+
+- The ankle roll mean tracking error decreased slightly.
+- The ankle roll max tracking error remained almost unchanged.
+- The visible leg shaking / twisting was not clearly resolved.
+
+Judgment:
+
+- Ankle roll PID gain alone is not the main cause of the command_3 shaking.
+- The result suggests that damping, contact/friction, foot-ground interaction, or trajectory/contact timing should be checked next.
+- The next recommended test is an ankle roll damping test, using small passive damping on the ankle roll joints while keeping the original PID gains.
+
+
+
+#### command_3 ankle roll damping test
+
+An ankle-roll damping test was performed after the ankle-roll-only PID gain test did not clearly resolve the visible leg shaking.
+
+Test setup:
+
+- Base model: joint-state replay test model
+- Target joints:
+  - right_ankle_roll_joint
+  - left_ankle_roll_joint
+- PID gain:
+  - P=20, I=0, D=1
+- Added passive dynamics:
+  - damping=0.2
+  - friction=0.0
+- Replay:
+  - command_3
+  - hold-start = 2.0 s
+  - joint tracking topic: `/step/leg_joint_states`
+
+Result:
+
+- right_ankle_roll_joint
+  - max error ≈ 0.145 rad
+  - mean error ≈ 0.073 rad
+- left_ankle_roll_joint
+  - max error ≈ 0.134 rad
+  - mean error ≈ 0.076 rad
+
+Observation:
+
+- The visible shaking/twisting did not clearly improve.
+- Max ankle roll tracking error remained almost unchanged.
+- Mean ankle roll error was not clearly improved compared with the ankle-roll-stiff test.
+
+Judgment:
+
+- Ankle roll passive damping alone is not the main cause of the command_3 shaking.
+- Together with the ankle-roll-stiff test, this suggests that the remaining command_3 shaking is likely related to foot-ground contact, collision/friction modeling, trajectory/contact timing, or Gazebo base constraint effects rather than simple ankle roll controller weakness.

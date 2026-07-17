@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import csv
 import math
+import re
+import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -52,6 +56,15 @@ LEFT_PITCH_JOINT_COLUMNS = frozenset(
 BASE_LATERAL_TOPIC = "/step/base_lateral_joint/cmd_pos"
 BASE_LATERAL_JOINT_NAME = "base_lateral_to_world"
 BASE_LATERAL_CSV_COLUMNS = ("COM_y", "Ycom")
+DEFAULT_TRACKING_OUTPUT = Path("gazebo_joint_tracking_log.csv")
+DEFAULT_STEP_JOINT_STATE_TOPIC = (
+    "/world/step_test/model/step_humanoid/joint_state"
+)
+LEG_JOINT_STATE_TOPIC = "/step/leg_joint_states"
+TRACKED_LEG_JOINTS = tuple(
+    topic.removeprefix("/step/").removesuffix("/cmd_pos")
+    for topic in LEG_JOINT_TOPICS.values()
+)
 
 CONTROLLER_SDF_PATH = (
     Path(__file__).resolve().parents[1]
@@ -191,12 +204,136 @@ def load_position_controller_mappings(sdf_path: Path):
     return controller_mappings, None
 
 
+def find_joint_state_topic(configured_topic=None):
+    if configured_topic:
+        return configured_topic
+
+    try:
+        result = subprocess.run(
+            ["gz", "topic", "-l"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"[WARNING] Could not run 'gz topic -l': {error}")
+        return None
+
+    topics = [line.strip() for line in result.stdout.splitlines()]
+    if LEG_JOINT_STATE_TOPIC in topics:
+        return LEG_JOINT_STATE_TOPIC
+
+    world_model_pattern = re.compile(
+        r"^/world/[^/]+/model/[^/]+/joint_state$"
+    )
+    candidates = [
+        topic for topic in topics if world_model_pattern.fullmatch(topic)
+    ]
+    if not candidates:
+        candidates = [
+            topic for topic in topics if topic.endswith("/joint_state")
+        ]
+    if DEFAULT_STEP_JOINT_STATE_TOPIC in candidates:
+        candidates.remove(DEFAULT_STEP_JOINT_STATE_TOPIC)
+        candidates.insert(0, DEFAULT_STEP_JOINT_STATE_TOPIC)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        print(
+            "[WARNING] Multiple Gazebo joint-state topics found; using "
+            f"{candidates[0]}. Set --joint-state-topic to override."
+        )
+    return candidates[0]
+
+
+def joint_state_message_type(topic):
+    if topic is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["gz", "topic", "-i", "-t", topic],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(
+            f"[WARNING] Could not inspect message type for {topic}: {error}"
+        )
+        return None
+
+    match = re.search(
+        r"Message Type:\s*([^\s]+)", result.stdout + result.stderr
+    )
+    return match.group(1) if match else None
+
+
+def joint_name_from_command_topic(topic: str):
+    prefix = "/step/"
+    suffix = "/cmd_pos"
+    if topic.startswith(prefix) and topic.endswith(suffix):
+        return topic[len(prefix):-len(suffix)]
+    return None
+
+
+class JointTrackingSubscriber:
+    def __init__(self, topic, expected_joint_names):
+        from gz.msgs10.model_pb2 import Model
+        from gz.transport13 import Node
+
+        self.lock = threading.Lock()
+        self.positions = {}
+        self.received_message = False
+        self.expected_joint_names = tuple(expected_joint_names)
+        self.reported_first_message = False
+        self.node = Node()
+        subscribed = self.node.subscribe(Model, topic, self.on_joint_state)
+        if subscribed is False:
+            raise RuntimeError(f"Failed to subscribe to {topic}")
+
+    def on_joint_state(self, message):
+        positions = {}
+        received_names = []
+        for joint in message.joint:
+            received_names.append(joint.name)
+            name = joint.name.replace("/", "::").rsplit("::", 1)[-1]
+            positions[name] = float(joint.axis1.position)
+
+        if not self.reported_first_message:
+            print(
+                "[JOINT TRACKING] first joint names: "
+                + (", ".join(received_names) if received_names else "<none>")
+            )
+            missing_names = [
+                name
+                for name in self.expected_joint_names
+                if name not in positions
+            ]
+            if missing_names:
+                print(
+                    "[WARNING] First joint-state message did not contain: "
+                    + ", ".join(missing_names)
+                )
+            self.reported_first_message = True
+        with self.lock:
+            self.positions.update(positions)
+            self.received_message = True
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.positions), self.received_message
+
+
 class GazeboDoublePublishers:
-    def __init__(self, topics, dry_run: bool):
+    def __init__(self, topics, dry_run: bool, optional_topics=None):
         self.dry_run = dry_run
         self.node = None
         self.publishers = {}
         self.double_message_type = None
+        self.optional_topics = set(optional_topics or ())
+        self.warned_publish_topics = set()
 
         if dry_run:
             return
@@ -213,8 +350,23 @@ class GazeboDoublePublishers:
         self.double_message_type = Double
         self.node = Node()
         for topic in topics:
-            publisher = self.node.advertise(topic, Double)
+            try:
+                publisher = self.node.advertise(topic, Double)
+            except Exception as error:  # Gazebo bindings expose runtime errors.
+                if topic in self.optional_topics:
+                    print(
+                        f"[WARNING] Could not advertise optional Gazebo "
+                        f"topic {topic}: {error}"
+                    )
+                    continue
+                raise
             if not publisher.valid():
+                if topic in self.optional_topics:
+                    print(
+                        f"[WARNING] Failed to advertise optional Gazebo "
+                        f"topic: {topic}"
+                    )
+                    continue
                 raise RuntimeError(f"Failed to advertise Gazebo topic: {topic}")
             self.publishers[topic] = publisher
 
@@ -232,8 +384,19 @@ class GazeboDoublePublishers:
             for topic, publisher in self.publishers.items()
             if not publisher.has_connections()
         ]
-        if disconnected_topics:
-            missing_topics = ", ".join(disconnected_topics)
+        disconnected_required_topics = [
+            topic
+            for topic in disconnected_topics
+            if topic not in self.optional_topics
+        ]
+        for topic in disconnected_topics:
+            if topic in self.optional_topics:
+                print(
+                    f"[WARNING] No Gazebo controller subscription found for "
+                    f"optional topic: {topic}"
+                )
+        if disconnected_required_topics:
+            missing_topics = ", ".join(disconnected_required_topics)
             raise RuntimeError(
                 "No Gazebo controller subscription found for topic(s): "
                 f"{missing_topics}"
@@ -244,9 +407,30 @@ class GazeboDoublePublishers:
             return
 
         for _, topic, _, command in commands:
+            if topic not in self.publishers:
+                continue
             message = self.double_message_type(data=command)
-            published = self.publishers[topic].publish(message)
+            try:
+                published = self.publishers[topic].publish(message)
+            except Exception as error:  # Keep an optional diagnostic lock safe.
+                if topic in self.optional_topics:
+                    if topic not in self.warned_publish_topics:
+                        print(
+                            f"[WARNING] Failed to publish optional Gazebo "
+                            f"topic {topic}: {error}"
+                        )
+                        self.warned_publish_topics.add(topic)
+                    continue
+                raise
             if published is False:
+                if topic in self.optional_topics:
+                    if topic not in self.warned_publish_topics:
+                        print(
+                            f"[WARNING] Failed to publish optional Gazebo "
+                            f"topic: {topic}"
+                        )
+                        self.warned_publish_topics.add(topic)
+                    continue
                 raise RuntimeError(f"Failed to publish Gazebo topic: {topic}")
 
 
@@ -317,6 +501,31 @@ def main():
         ),
     )
     parser.add_argument(
+        "--lock-base-lateral",
+        action="store_true",
+        help=(
+            "Publish 0.0 to /step/base_lateral_joint/cmd_pos on every "
+            "replay frame"
+        ),
+    )
+    parser.add_argument(
+        "--log-joint-tracking",
+        action="store_true",
+        help=(
+            "Log commanded and actual Gazebo leg-joint positions to "
+            "gazebo_joint_tracking_log.csv"
+        ),
+    )
+    parser.add_argument(
+        "--joint-state-topic",
+        default=None,
+        metavar="TOPIC",
+        help=(
+            "Gazebo Model joint-state topic; when omitted, inspect "
+            "'gz topic -l' automatically"
+        ),
+    )
+    parser.add_argument(
         "--base-lateral-axis-sign",
         type=int,
         choices=(-1, 1),
@@ -362,6 +571,11 @@ def main():
         raise ValueError("--progress-every must be greater than 0")
     if args.base_lateral_scale < 0.0:
         raise ValueError("--base-lateral-scale must be greater than or equal to 0")
+    if args.lock_base_lateral and args.replay_base_lateral_from_com_y:
+        parser.error(
+            "--lock-base-lateral cannot be combined with "
+            "--replay-base-lateral-from-com-y"
+        )
 
     csv_path = Path(args.csv_path)
     if not csv_path.exists():
@@ -461,6 +675,8 @@ def main():
             "replay_base_lateral_from_com_y: "
             f"{args.replay_base_lateral_from_com_y}"
         )
+        print(f"lock_base_lateral: {args.lock_base_lateral}")
+        print(f"log_joint_tracking: {args.log_joint_tracking}")
         print(f"base_lateral_axis_sign: {args.base_lateral_axis_sign:+d}")
         print(f"base_lateral_scale: {args.base_lateral_scale:g}")
         print(f"hold_start: {args.hold_start}")
@@ -474,6 +690,8 @@ def main():
                 f"  {base_lateral_config['column']:8s} -> "
                 f"{BASE_LATERAL_TOPIC}"
             )
+        elif args.lock_base_lateral:
+            print(f"  {'base_lock':8s} -> {BASE_LATERAL_TOPIC}")
         print()
         print("[Joint Transform]")
         for column in joint_topics:
@@ -546,27 +764,94 @@ def main():
             )
 
     publish_topics = list(joint_topics.values())
+    optional_topics = []
     if base_lateral_config is not None:
         publish_topics.append(BASE_LATERAL_TOPIC)
+    elif args.lock_base_lateral:
+        publish_topics.append(BASE_LATERAL_TOPIC)
+        optional_topics.append(BASE_LATERAL_TOPIC)
 
     gazebo_publishers = GazeboDoublePublishers(
         publish_topics,
         args.dry_run,
+        optional_topics,
     )
+
+    tracking_subscriber = None
+    tracking_output_file = None
+    tracking_writer = None
+    tracking_topic = None
+    if args.log_joint_tracking:
+        tracking_topic = find_joint_state_topic(args.joint_state_topic)
+        tracking_message_type = joint_state_message_type(tracking_topic)
+        print(
+            "[JOINT TRACKING] selected joint state topic: "
+            f"{tracking_topic if tracking_topic is not None else '<not found>'}"
+        )
+        print(
+            "[JOINT TRACKING] joint state message type: "
+            f"{tracking_message_type or 'gz.msgs.Model (expected)'}"
+        )
+        if tracking_topic is None:
+            print(
+                "[WARNING] No Gazebo joint-state topic was found. Check "
+                "'gz topic -l' for a topic ending in /joint_state, or pass "
+                "--joint-state-topic TOPIC. Actual positions will be NaN."
+            )
+        elif args.dry_run:
+            print(
+                f"[WARNING] Dry-run does not subscribe to {tracking_topic}; "
+                "actual positions will be NaN."
+            )
+        else:
+            try:
+                if tracking_message_type not in (None, "gz.msgs.Model"):
+                    print(
+                        f"[WARNING] {tracking_topic} publishes "
+                        f"{tracking_message_type}; this logger expects "
+                        "gz.msgs.Model."
+                    )
+                tracking_subscriber = JointTrackingSubscriber(
+                    tracking_topic, TRACKED_LEG_JOINTS
+                )
+            except (ImportError, RuntimeError) as error:
+                print(
+                    f"[WARNING] Could not subscribe to joint-state topic "
+                    f"{tracking_topic}: {error}. Actual positions will be NaN."
+                )
+
+        tracking_output_file = DEFAULT_TRACKING_OUTPUT.open("w", newline="")
+        tracking_writer = csv.writer(tracking_output_file)
+        tracking_writer.writerow(
+            (
+                "frame",
+                "time",
+                "joint_name",
+                "command_position",
+                "actual_position",
+                "error",
+            )
+        )
+        print(f"[JOINT TRACKING] output={DEFAULT_TRACKING_OUTPUT}")
 
     prepared_frames = []
     for _, row in selected.iterrows():
+        commands = frame_commands(
+            row,
+            joint_topics,
+            base_values,
+            args.use_gazebo_offsets,
+            args.mirror_left_pitch_chain,
+            base_lateral_config,
+        )
+        if args.lock_base_lateral:
+            commands.append(
+                ("base_lock", BASE_LATERAL_TOPIC, 0.0, 0.0)
+            )
         prepared_frames.append(
             (
                 int(row["frame"]),
-                frame_commands(
-                    row,
-                    joint_topics,
-                    base_values,
-                    args.use_gazebo_offsets,
-                    args.mirror_left_pitch_chain,
-                    base_lateral_config,
-                ),
+                commands,
             )
         )
     if args.unwrap_joint_commands:
@@ -628,10 +913,65 @@ def main():
 
         time.sleep(args.dt)
 
+        if tracking_writer is not None:
+            actual_positions = {}
+            received_state = False
+            if tracking_subscriber is not None:
+                actual_positions, received_state = tracking_subscriber.snapshot()
+            command_positions = {
+                joint_name_from_command_topic(topic): command
+                for _, topic, _, command in commands
+                if joint_name_from_command_topic(topic) is not None
+            }
+            elapsed_time = time.monotonic() - replay_start_time
+            for joint_name in TRACKED_LEG_JOINTS:
+                command_position = command_positions.get(joint_name, math.nan)
+                actual_position = actual_positions.get(joint_name, math.nan)
+                error = (
+                    command_position - actual_position
+                    if math.isfinite(command_position)
+                    and math.isfinite(actual_position)
+                    else math.nan
+                )
+                tracking_writer.writerow(
+                    (
+                        frame,
+                        elapsed_time,
+                        joint_name,
+                        command_position,
+                        actual_position,
+                        error,
+                    )
+                )
+
+            if not received_state and replay_index == last_replay_index:
+                print(
+                    "[WARNING] No joint-state message was received during "
+                    "replay. Check 'gz topic -l' and verify that the model "
+                    "loads gz-sim-joint-state-publisher-system for the leg "
+                    "joints."
+                )
+
     print(
         f"[REPLAY] done. published_frames={published_frames}, "
         f"topics_per_frame={len(publish_topics)}"
     )
+    if tracking_subscriber is not None:
+        final_positions, _ = tracking_subscriber.snapshot()
+        missing_tracking_joints = [
+            joint_name
+            for joint_name in TRACKED_LEG_JOINTS
+            if joint_name not in final_positions
+        ]
+        if missing_tracking_joints:
+            print(
+                f"[WARNING] Joint-state topic {tracking_topic} did not "
+                "provide the requested leg joints: "
+                f"{', '.join(missing_tracking_joints)}. Verify the "
+                "gz-sim-joint-state-publisher-system <joint_name> settings."
+            )
+    if tracking_output_file is not None:
+        tracking_output_file.close()
 
 
 if __name__ == "__main__":
