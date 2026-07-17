@@ -9,6 +9,8 @@ option(STEP_ROLL_SCALE_TEST
   "Enable command-specific roll scale testing" OFF)
 option(STEP_REAL_ROBOT_COMMAND_GATE
   "Allow only real-robot commands approved by the pre-check" OFF)
+option(STEP_REAL_ROBOT_STARTUP_SAFE
+  "Defer Dynamixel setup and startup motion until command 90" OFF)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -61,6 +63,13 @@ if(STEP_REAL_ROBOT_COMMAND_GATE)
     safety_control_node PRIVATE STEP_REAL_ROBOT_COMMAND_GATE=1)
   message(WARNING
     "STEP_REAL_ROBOT_COMMAND_GATE is enabled: only approved normal commands are allowed")
+endif()
+
+if(STEP_REAL_ROBOT_STARTUP_SAFE)
+  target_compile_definitions(
+    safety_control_node PRIVATE STEP_REAL_ROBOT_STARTUP_SAFE=1)
+  message(WARNING
+    "STEP_REAL_ROBOT_STARTUP_SAFE is enabled: command 90 is required before motion")
 endif()
 
 target_include_directories(safety_control_node PRIVATE

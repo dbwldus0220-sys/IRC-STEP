@@ -44,6 +44,7 @@ public:
         dxl_ctrl_ = std::make_shared<Dxl_Controller>(dxl_.get());
         callback_ = std::make_shared<Callback>(trajectory_.get(), ik_.get(), dxl_.get(), pick_.get());
 
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
         VectorXd theta_zero = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
         dxl_->MoveToTargetSmoothCos(theta_zero, 150, 10);
         LogDofSnapshot("CENTER");
@@ -53,6 +54,13 @@ public:
         dxl_->MoveToTargetSmoothCos(callback_->All_Theta, 150, 10);
         LogDofSnapshot("WALK_READY");
         std::cout << "[Info] Start is half!!!!!!" << std::endl;
+#else
+        RCLCPP_WARN(
+            this->get_logger(),
+            "[STARTUP_SAFE] Automatic torque enable, PID write, CENTER, and "
+            "WALK_READY are disabled. Send command 90 when physically ready."
+        );
+#endif
 
         // /START 퍼블리셔 생성
         start_pub_ = this->create_publisher<std_msgs::msg::Bool>("/START", 10);
@@ -142,6 +150,22 @@ private:
     void LogCurrentDofState()
     {
         if (!dxl_) return;
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+        if (!dxl_->IsHardwarePrepared())
+        {
+            static bool wait_logged = false;
+            if (!wait_logged)
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] DOF monitor is waiting for command 90; "
+                    "no Dynamixel read packet is sent"
+                );
+                wait_logged = true;
+            }
+            return;
+        }
+#endif
 
         Eigen::VectorXd q = dxl_->GetThetaAct();   // rad
         Eigen::VectorXd i = dxl_->GetCurrent();    // mA
@@ -165,8 +189,10 @@ private:
 
 #ifdef STEP_REAL_ROBOT_COMMAND_GATE
         constexpr int approved_normal_command = 1;
+        constexpr int hardware_prepare_command = 90;
         constexpr int emergency_stop_command = 98;
         if (msg->command != approved_normal_command
+            && msg->command != hardware_prepare_command
             && msg->command != emergency_stop_command)
         {
             RCLCPP_ERROR(
@@ -255,6 +281,8 @@ private:
 
             case 33: command_ = 33; break; //Step_In_Place
 
+            case 90: command_ = 90; break; // Hardware prepare / WALK_READY
+
             case 77: command_ = 77; recovery_mode = true; break; //recovery
 
             case 97: command_ = 97; break; //Motion_End
@@ -268,10 +296,67 @@ private:
 
         
         // 98(Stop) 명령 제외하고는 동작 중에는 명령 무시
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+        if (motion_in_progress_ && command_ != 98) {
+#else
         if (motion_in_progress_ == true & current_go_ != 98) {
+#endif
             RCLCPP_WARN(this->get_logger(), "동작 중: 명령 무시됨");
             return;
         }
+
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+        if (command_ == 90)
+        {
+            if (dxl_->IsHardwarePrepared())
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] command_90 ignored: hardware is already prepared"
+                );
+                return;
+            }
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STARTUP_SAFE] command_90 accepted: hardware prepare and "
+                "startup posture motion will begin"
+            );
+            if (!dxl_->PrepareHardware())
+            {
+                RCLCPP_ERROR(
+                    this->get_logger(),
+                    "[STARTUP_SAFE] Hardware prepare failed; CENTER/WALK_READY skipped"
+                );
+                return;
+            }
+
+            VectorXd theta_zero = VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] Moving to CENTER");
+            dxl_->MoveToTargetSmoothCos(theta_zero, 150, 10);
+            LogDofSnapshot("CENTER");
+
+            callback_->Set();
+            RCLCPP_WARN(this->get_logger(), "[STARTUP_SAFE] Moving to WALK_READY");
+            dxl_->MoveToTargetSmoothCos(callback_->All_Theta, 150, 10);
+            LogDofSnapshot("WALK_READY");
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STARTUP_SAFE] Hardware prepare complete; normal motion is enabled"
+            );
+            return;
+        }
+
+        if (command_ != 98 && !dxl_->IsHardwarePrepared())
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "[STARTUP_SAFE] blocked command=%d, reason=hardware_not_prepared; "
+                "send command 90 first",
+                command_
+            );
+            return;
+        }
+#endif
 
         // 모션 command 저장
         current_go_ = command_;
@@ -295,7 +380,32 @@ private:
         robot_msgs::msg::MotionEnd end_msg;
 
         if (current_go_ == 98){
-            RCLCPP_INFO(this->get_logger(), "[STOP] 명령 수신");
+            if (!dxl_->IsHardwarePrepared())
+            {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "[STOP] Hardware was not prepared: no posture packet sent; "
+                    "this node has not enabled torque"
+                );
+                callback_->ResetMotion();
+                motion_in_progress_ = false;
+                motion_loop_timer_->cancel();
+                current_go_ = 0;
+                return;
+            }
+#ifdef STEP_DRY_RUN_NO_DXL
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STOP][Dry-run] Would execute WALK_READY posture transition; "
+                "this is not torque OFF, then current_go_ changes to 77"
+            );
+#else
+            RCLCPP_WARN(
+                this->get_logger(),
+                "[STOP] Executing WALK_READY posture transition; "
+                "this is not torque OFF, then current_go_ changes to 77"
+            );
+#endif
             callback_->Set();
             dxl_->MoveToTargetSmoothCos(callback_->All_Theta, 150, 10);
             callback_->ResetMotion();

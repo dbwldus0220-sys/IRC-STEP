@@ -208,6 +208,8 @@ class Dxl
         virtual int16_t SetPresentMode(int16_t Mode); 
         virtual void syncWriteTheta();
         void SetPIDGain(VectorXd PID_Gain);
+        bool PrepareHardware();
+        bool IsHardwarePrepared() const;
 
 
         
@@ -224,10 +226,11 @@ class Dxl
         virtual VectorXd read_rad();
         virtual void MoveToTargetSmoothCos(const VectorXd& theta_goal, int steps, int delay_ms);
 
-
-
-
-
+    private:
+        bool hardware_prepared_ = false;
+        bool hardware_prepare_attempted_ = false;
+        bool port_open_ = false;
+        bool communication_ready_ = false;
 };
 
 

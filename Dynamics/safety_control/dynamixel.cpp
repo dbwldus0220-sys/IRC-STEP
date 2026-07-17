@@ -1,4 +1,5 @@
 #include "dynamixel.hpp"
+#include <cstdint>
 #include <iostream>  
 
 // const char* getAvailableDeviceName()
@@ -37,11 +38,14 @@ Dxl::Dxl()
         << "[Dry-run] STEP_DRY_RUN_NO_DXL enabled; skipping all Dynamixel "
            "port access, configuration, reads, and writes."
         << std::endl;
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
+    hardware_prepared_ = true;
 #else
-    uint8_t dxl_error = 0;
-    int dxl_comm_result = COMM_TX_FAIL;
-
-
+    std::cout
+        << "[STARTUP_SAFE] Dry-run hardware prepare is deferred until command 90."
+        << std::endl;
+#endif
+#else
     // const char* device_name = getAvailableDeviceName();   // ✅ 자동 선택
     // portHandler = dynamixel::PortHandler::getPortHandler(device_name);
     // packetHandler = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION);
@@ -49,15 +53,74 @@ Dxl::Dxl()
     portHandler = dynamixel::PortHandler::getPortHandler(DEVICE_NAME);
     packetHandler = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION);
 
-    if (!portHandler->openPort())
+    port_open_ = portHandler->openPort();
+    if (!port_open_)
         std::cerr << "[Error] Failed to open the port!" << std::endl;
     else 
         std::cout << "[Info] Succeeded to open the port!" << std::endl;
 
-    if (!portHandler->setBaudRate(BAUDRATE))
+    communication_ready_ = port_open_ && portHandler->setBaudRate(BAUDRATE);
+    if (!communication_ready_)
         std::cerr << "[Error] Failed to set the baudrate!" << std::endl;
     else 
         std::cout << "[Info] Succeeded to set the baudrate!" << std::endl;
+
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
+    PrepareHardware();
+#else
+    std::cout
+        << "[STARTUP_SAFE] Register writes are deferred. Send command 90 "
+           "to prepare hardware and move to WALK_READY."
+        << std::endl;
+#endif
+#endif
+}
+
+bool Dxl::PrepareHardware()
+{
+    if (hardware_prepared_)
+    {
+        std::cout << "[STARTUP_SAFE] Hardware is already prepared." << std::endl;
+        return true;
+    }
+
+#ifdef STEP_DRY_RUN_NO_DXL
+    SetPresentMode(Mode);
+    hardware_prepared_ = true;
+    std::cout
+        << "[STARTUP_SAFE][Dry-run] Hardware prepare completed without "
+           "Dynamixel packets."
+        << std::endl;
+    return true;
+#else
+    uint8_t dxl_error = 0;
+    int dxl_comm_result = COMM_TX_FAIL;
+    bool prepare_succeeded = true;
+    hardware_prepare_attempted_ = true;
+
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+    if (!communication_ready_)
+    {
+        std::cerr
+            << "[STARTUP_SAFE] Hardware prepare rejected: port/baudrate is not ready."
+            << std::endl;
+        return false;
+    }
+
+    for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+    {
+        dxl_comm_result = packetHandler->write1ByteTxRx(
+            portHandler, dxl_id[i], DxlReg_TorqueEnable, 0, &dxl_error);
+        std::cout << "[DXL_PACKET] torque_enable=0 ID=" << int(dxl_id[i])
+                  << " reason=prepare" << std::endl;
+        if (dxl_comm_result != COMM_SUCCESS)
+        {
+            std::cerr << "[Error] Failed to disable torque before prepare for ID: "
+                      << int(dxl_id[i]) << std::endl;
+            prepare_succeeded = false;
+        }
+    }
+#endif
 
     int16_t current_mode = SetPresentMode(Mode);
 
@@ -66,8 +129,12 @@ Dxl::Dxl()
         for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
         {
             dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_OperatingMode, Current_Control_Mode, &dxl_error);
+            std::cout << "[DXL_PACKET] operating_mode ID=" << int(dxl_id[i]) << std::endl;
             if (dxl_comm_result != COMM_SUCCESS)
+            {
                 std::cerr << "[Error] Failed to set current control mode for ID: " << int(dxl_id[i]) << std::endl;
+                prepare_succeeded = false;
+            }
             else
                 std::cout << "[Info] Set current control mode for ID: " << int(dxl_id[i]) << std::endl;
         }
@@ -77,8 +144,12 @@ Dxl::Dxl()
         for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
         {
             dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_OperatingMode, Position_Control_Mode, &dxl_error);
+            std::cout << "[DXL_PACKET] operating_mode ID=" << int(dxl_id[i]) << std::endl;
             if (dxl_comm_result != COMM_SUCCESS)
+            {
                 std::cerr << "[Error] Failed to set position control mode for ID: " << int(dxl_id[i]) << std::endl;
+                prepare_succeeded = false;
+            }
             else
                 std::cout << "[Info] Set position control mode for ID: " << int(dxl_id[i]) << std::endl;
         }
@@ -86,26 +157,34 @@ Dxl::Dxl()
     else
     {
         std::cerr << "[Error] Invalid mode set." << std::endl;
+        prepare_succeeded = false;
     }
 
-
-
-
+#ifndef STEP_REAL_ROBOT_STARTUP_SAFE
     for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
     {
         dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_TorqueEnable, 1, &dxl_error);
+        std::cout << "[DXL_PACKET] torque_enable=1 ID=" << int(dxl_id[i]) << std::endl;
         if (dxl_comm_result != COMM_SUCCESS)
+        {
             std::cerr << "[Error] Failed to enable torque for ID: " << int(dxl_id[i]) << std::endl;
+            prepare_succeeded = false;
+        }
         else
             std::cout << "[Info] Torque enabled for ID: " << int(dxl_id[i]) << std::endl;
     }
+#endif
 
 
     for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
     {
         dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_LED, 1, &dxl_error);
+        std::cout << "[DXL_PACKET] led=1 ID=" << int(dxl_id[i]) << std::endl;
         if (dxl_comm_result != COMM_SUCCESS)
+        {
             std::cerr << "[Error] Failed to enable LED for ID: " << int(dxl_id[i]) << std::endl;
+            prepare_succeeded = false;
+        }
         else
             std::cout << "[Info] LED enabled for ID: " << int(dxl_id[i]) << std::endl;
     }
@@ -124,7 +203,48 @@ Dxl::Dxl()
     VectorXd PID_Gain(3);
     PID_Gain << 850, 0, 0;
     SetPIDGain(PID_Gain);
+    std::cout << "[DXL_PACKET] position_pid P=850 I=0 D=0" << std::endl;
+
+#ifdef STEP_REAL_ROBOT_STARTUP_SAFE
+    if (prepare_succeeded)
+    {
+        const VectorXd current_theta = read_rad();
+        SetThetaRef(current_theta);
+        syncWriteTheta();
+        std::cout
+            << "[STARTUP_SAFE] Present position was preloaded as goal before torque enable."
+            << std::endl;
+
+        for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+        {
+            dxl_comm_result = packetHandler->write1ByteTxRx(
+                portHandler, dxl_id[i], DxlReg_TorqueEnable, 1, &dxl_error);
+            std::cout << "[DXL_PACKET] torque_enable=1 ID=" << int(dxl_id[i])
+                      << std::endl;
+            if (dxl_comm_result != COMM_SUCCESS)
+            {
+                std::cerr << "[Error] Failed to enable torque for ID: "
+                          << int(dxl_id[i]) << std::endl;
+                prepare_succeeded = false;
+            }
+        }
+    }
 #endif
+
+    hardware_prepared_ = prepare_succeeded;
+    if (!hardware_prepared_)
+    {
+        std::cerr
+            << "[STARTUP_SAFE] Hardware prepare failed; motion remains blocked."
+            << std::endl;
+    }
+    return hardware_prepared_;
+#endif
+}
+
+bool Dxl::IsHardwarePrepared() const
+{
+    return hardware_prepared_;
 }
 
 Dxl::~Dxl()
@@ -133,25 +253,33 @@ Dxl::~Dxl()
     uint8_t dxl_error = 0;
     int dxl_comm_result = COMM_TX_FAIL;
 
-    for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+    if (hardware_prepare_attempted_)
     {
-        dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_TorqueEnable, 0, &dxl_error);
-        if (dxl_comm_result != COMM_SUCCESS)
-            std::cerr << "[Error] Failed to disable torque for ID: " << int(i) << std::endl;
-        else
-            std::cout << "[Info] Torque disabled for ID: " << int(dxl_id[i]) << std::endl;
+        for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+        {
+            dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_TorqueEnable, 0, &dxl_error);
+            std::cout << "[DXL_PACKET] torque_enable=0 ID=" << int(dxl_id[i]) << std::endl;
+            if (dxl_comm_result != COMM_SUCCESS)
+                std::cerr << "[Error] Failed to disable torque for ID: " << int(i) << std::endl;
+            else
+                std::cout << "[Info] Torque disabled for ID: " << int(dxl_id[i]) << std::endl;
+        }
+
+        for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+        {
+            dxl_comm_result = packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_LED, 0, &dxl_error);
+            std::cout << "[DXL_PACKET] led=0 ID=" << int(dxl_id[i]) << std::endl;
+            if (dxl_comm_result != COMM_SUCCESS)
+                std::cerr << "[Error] Failed to disable LED for ID: " << int(i) << std::endl;
+            else
+                std::cout << "[Info] LED disabled for ID: " << int(dxl_id[i]) << std::endl;
+        }
     }
 
-    for (uint8_t i = 0; i < NUMBER_OF_DYNAMIXELS; i++)
+    if (port_open_)
     {
-        packetHandler->write1ByteTxRx(portHandler, dxl_id[i], DxlReg_LED, 0, &dxl_error);
-        if (dxl_comm_result != COMM_SUCCESS)
-            std::cerr << "[Error] Failed to disable LED for ID: " << int(i) << std::endl;
-        else
-            std::cout << "[Info] LED disabled for ID: " << int(dxl_id[i]) << std::endl;
+        portHandler->closePort();
     }
-
-    portHandler->closePort();
 #endif
 }
 
@@ -288,6 +416,14 @@ void Dxl::syncWriteTheta()
     gSyncWriteTh.addParam(dxl_id[i], (uint8_t *)&parameter);
   }
   gSyncWriteTh.txPacket();
+  static std::uint64_t packet_count = 0;
+  ++packet_count;
+  if (packet_count <= 3 || packet_count % 100 == 0)
+  {
+    std::cout << "[DXL_PACKET] goal_position sync_write motors="
+              << NUMBER_OF_DYNAMIXELS
+              << " packet_count=" << packet_count << std::endl;
+  }
   gSyncWriteTh.clearParam();
 #endif
 }

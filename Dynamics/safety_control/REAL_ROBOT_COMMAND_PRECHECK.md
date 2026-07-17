@@ -136,3 +136,33 @@ Conclusion:
 The command gate correctly allows only command_1.
 command_2, command_3, and command_32 are blocked when STEP_REAL_ROBOT_COMMAND_GATE=ON.
 command_1 roll50 works without triggering the roll guard.
+
+## Startup safe dry-run verification
+
+`STEP_REAL_ROBOT_STARTUP_SAFE` was verified together with:
+
+- `STEP_DRY_RUN_NO_DXL=ON`
+- `STEP_ROLL_SCALE_TEST=ON`
+- `STEP_REAL_ROBOT_COMMAND_GATE=ON`
+- `STEP_REAL_ROBOT_STARTUP_SAFE=ON`
+
+Verified sequence:
+
+1. Node startup did not run automatic CENTER or WALK_READY motion.
+2. DOF monitor waited for command 90 and did not send Dynamixel read packets before hardware prepare.
+3. command_1 before hardware prepare was blocked with `hardware_not_prepared`.
+4. command_90 performed hardware prepare in dry-run mode.
+5. After command_90, command_1 was allowed.
+6. command_1 generated `safety_all_theta_command_log.csv`.
+7. command_1 roll50 was applied:
+   - rows: 540
+   - right roll scale: 0.5
+   - left roll scale: 0.5
+   - roll_scale_applied sum: 540
+8. command_2, command_3, and command_32 remained blocked by the command gate.
+
+Important real-robot note:
+
+- `command_90` is the hardware activation command.
+- On the real robot, command_90 may enable torque, write operating mode/PID settings, preload present position, and move through CENTER and WALK_READY.
+- command_90 must only be tested with the robot physically supported and emergency power-off available.
