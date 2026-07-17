@@ -220,3 +220,30 @@ Important real-robot note:
 - command_92 is currently the riskiest stage because it moves the whole robot to CENTER.
 - command_93 moves from CENTER to WALK_READY.
 - Actual robot testing must use physical support and emergency power-off.
+
+
+### Dry-run validation of real-robot command gate and startup-safe flow
+
+A dry-run validation was performed with:
+
+- `STEP_DRY_RUN_NO_DXL=ON`
+- `STEP_REAL_ROBOT_COMMAND_GATE=ON`
+- `STEP_REAL_ROBOT_STARTUP_SAFE=ON`
+
+Result:
+
+- On node startup, automatic torque enable, PID write, CENTER, and WALK_READY were disabled.
+- DOF monitor waited for command 90 and did not send Dynamixel read packets in dry-run mode.
+- command 90 was accepted and advanced the startup stage to `Configured`.
+- command 91 was accepted and advanced the startup stage to `TorqueEnabled`.
+- command 92 was accepted and advanced the startup stage to `Centered`.
+- command 93 was accepted and advanced the startup stage to `WalkReady`.
+- command 1 was allowed and generated a safety CSV.
+- The CSV contained only `go=1`.
+- command 2, command 3, and command 32 were blocked by `COMMAND_GATE` with reason `not_approved_for_real_robot_test`.
+
+Judgment:
+
+- The real-robot safety build correctly blocks non-approved walking commands.
+- The startup-safe sequence correctly requires staged commands 90 → 91 → 92 → 93 before normal command execution.
+- The dry-run mode confirms this flow without sending Dynamixel packets.
