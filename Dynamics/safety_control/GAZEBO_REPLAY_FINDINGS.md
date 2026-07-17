@@ -60,3 +60,47 @@ Gazebo leg joint 매핑은 다음과 같다.
 - 실제 로봇 적용 전에는 `STEP_ROLL_SCALE_TEST`와 같은 compile-time 또는 runtime 테스트 옵션으로만 검증한다.
 - Scale 변경은 먼저 dry-run CSV와 Gazebo에서 확인하고, 관절별 step, 전체 자세, 지면 접촉 및 균형 영향을 함께 검토한다.
 
+#### command_1 follow-up conclusion
+
+- command_1에 roll50을 적용한 코드 적용본을 확인했다.
+- 원본 대비 초반 오른다리 lateral kick이 확실히 줄었다.
+- 움직임 크기는 크게 죽지 않았다.
+- 한 바퀴 회전이나 급격한 꺾임은 보이지 않았다.
+- roll range ratio는 약 0.5로 확인되었다.
+- command_1은 현재 roll50 적용 후보로 유지한다.
+
+
+
+#### command_32 follow-up conclusion
+
+- command_32에 roll50을 적용한 코드 적용본을 확인했다.
+- roll scale은 정상 적용되었고, roll guard는 개입하지 않았다.
+- roll 계열 max_safe_step은 충분히 작았다.
+- 하지만 초반 오른다리 lateral kick은 여전히 남았다.
+- right40_left50 후처리도 육안상 큰 개선이 없었다.
+- pitch_step025 후처리도 초반 lateral kick을 제거하지 못했다.
+- lateral-slide world에서는 fixed-base보다 약간 줄어드는 것처럼 보였다.
+- soft-start에서는 lateral kick이 더 줄었지만, 전체 움직임도 작아졌다.
+- 따라서 command_32 초반 lateral kick은 roll scale 단독 문제가 아니라 시작 전환부, 궤적 구조, support-leg 보정, 또는 fixed-base replay 조건의 영향으로 판단한다.
+- command_32에는 roll50을 강제 적용하기보다 테스트 옵션/후보로 유지한다.
+
+
+#### command_2 / command_3 roll50 follow-up
+
+- command_2와 command_3에는 STEP_ROLL_SCALE_TEST가 적용되지 않는 것을 확인했다.
+  - roll_scale_right=1
+  - roll_scale_left=1
+  - roll_scale_applied sum=0
+  - raw_range와 safe_range가 동일했다.
+- 따라서 command_2/3에서 보이는 움직임 작음, 다리 옆 휨, command_3의 비틀림은 roll scale test 때문에 새로 생긴 문제가 아니다.
+
+- command_2 roll50 후처리 replay를 확인했다.
+- 급격한 꺾임은 없었고, 옆으로 휘는 현상은 약간 줄었다.
+- 하지만 움직임이 확실히 더 작아졌다.
+- 따라서 command_2는 roll50 적용 후보로 보지 않는다.
+
+- command_3 roll50 후처리 replay를 확인했다.
+- 다리가 옆으로 비틀리는 현상이 여전히 남아 있었다.
+- 따라서 command_3의 비틀림은 roll scale 단독 문제가 아니며, roll50 적용 후보로 보지 않는다.
+
+- command_2/3는 큰 안전 발산 문제는 없지만, 자세 품질 개선이 필요한 명령으로 분류한다.
