@@ -104,3 +104,14 @@ Gazebo leg joint 매핑은 다음과 같다.
 - 따라서 command_3의 비틀림은 roll scale 단독 문제가 아니며, roll50 적용 후보로 보지 않는다.
 
 - command_2/3는 큰 안전 발산 문제는 없지만, 자세 품질 개선이 필요한 명령으로 분류한다.
+
+
+#### command_3 yaw/roll isolation check
+
+- command_3의 옆 비틀림 원인을 분리하기 위해 후처리 replay를 확인했다.
+- RL0 yaw를 첫 프레임 값으로 고정한 no_yaw replay에서는 비틀림이 줄어들지 않았다.
+- 따라서 command_3 비틀림은 yaw 단독 문제가 아니다.
+- roll 관절(RL1, RL5, LL1, LL5)을 첫 프레임 값으로 고정한 no_roll replay에서는 비틀림이 약간 줄었다.
+- 하지만 비틀림이 완전히 사라지지는 않았다.
+- 따라서 command_3 비틀림은 roll 계열 영향이 일부 있으나, roll scale 단독으로 해결되는 문제는 아니다.
+- command_3는 추후 전체 roll/pitch 궤적 구조와 fixed-base replay 조건을 함께 고려해 개선해야 한다.
