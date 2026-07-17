@@ -247,3 +247,12 @@ Judgment:
 - The real-robot safety build correctly blocks non-approved walking commands.
 - The startup-safe sequence correctly requires staged commands 90 → 91 → 92 → 93 before normal command execution.
 - The dry-run mode confirms this flow without sending Dynamixel packets.
+
+
+Important real-robot note:
+
+- command_90 writes configuration registers.
+- command_91 enables torque.
+- command_92 is currently the riskiest stage because it moves the whole robot to CENTER.
+- command_93 moves the robot to WALK_READY.
+- command_1 is only the first low-risk walking command allowed by the current gate; it is not a full approval for unrestricted walking.
