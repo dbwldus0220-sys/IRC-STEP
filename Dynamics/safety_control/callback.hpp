@@ -54,6 +54,14 @@ private:
     int roll_scale_reference_command_ = -1;
 #endif
 
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+    int command32_start_trajectory_frames_ = 0;
+#endif
+
+#ifdef STEP_COMMAND32_COMPENSATION_TEST
+    std::uint32_t command32_compensation_frame_ = 0;
+#endif
+
 #ifdef STEP_SAFETY_COMMAND_LOG
     std::ofstream safety_command_log_;
     std::uint64_t safety_command_log_frame_ = 0;
@@ -64,6 +72,19 @@ private:
         double roll_scale_right,
         double roll_scale_left,
         bool roll_scale_applied,
+        bool command32_start_blend,
+        double command32_blend_factor,
+        double command32_roll_blend_factor,
+        double command32_pitch_blend_factor,
+        double command32_right_pitch_blend_factor,
+        double command32_left_pitch_blend_factor,
+        double command32_roll_scale,
+        bool command32_roll_scale_applied,
+        bool command32_start_trajectory_test,
+        int command32_start_trajectory_phase,
+        bool command32_compensation_test,
+        double command32_compensation_scale,
+        const char* command32_compensation_phase,
         const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
         bool roll_guard_enabled
     );

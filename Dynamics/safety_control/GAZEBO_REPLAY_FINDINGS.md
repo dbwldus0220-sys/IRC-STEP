@@ -115,3 +115,29 @@ Gazebo leg joint 매핑은 다음과 같다.
 - 하지만 비틀림이 완전히 사라지지는 않았다.
 - 따라서 command_3 비틀림은 roll 계열 영향이 일부 있으나, roll scale 단독으로 해결되는 문제는 아니다.
 - command_3는 추후 전체 roll/pitch 궤적 구조와 fixed-base replay 조건을 함께 고려해 개선해야 한다.
+
+
+### command_32 compensation hold+ramp test
+
+`STEP_COMMAND32_COMPENSATION_TEST` was tested for command_32.
+
+Final tested candidate:
+
+- compensation hold frames: 80
+- compensation ramp frames: 135
+- frame 0~79: compensation scale = 0.0
+- frame 80~214: compensation scale ramps from 0.0 to 1.0 using smoothstep
+- frame 215 onward: compensation scale = 1.0
+
+Gazebo replay result:
+
+- The initial right-leg lateral kick disappeared.
+- Overall command_32 motion remained acceptable.
+- The legs were not perfectly straight throughout the motion; slight bending remained during some sections.
+- No sharp initial side kick, sudden rotation, or severe leg snap was observed.
+
+Judgment:
+
+- This is the best command_32 candidate so far.
+- The remaining slight leg bending is acceptable for the current Gazebo-level check.
+- Further tuning should focus on real-robot validation or detailed posture tuning, not more aggressive suppression of the command.

@@ -808,9 +808,69 @@ void Callback::SelectMotion(int go)
             re = 1;
             indext = 0;
 
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+            command32_start_trajectory_frames_ = 0;
+#endif
+#ifdef STEP_COMMAND32_COMPENSATION_TEST
+            command32_compensation_frame_ = 0;
+#endif
+
             trajectoryPtr->Change_Freq(2);
             IK_Ptr->Change_Com_Height(30);
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+            // Generate a command_1-style start reference at command_32's
+            // actual walking frequency, then transition into the original
+            // long-distance cruise reference over the first walking cycle.
+            trajectoryPtr->Change_Freq(1.5);
+            trajectoryPtr->Go_Straight_start(0.05, 2.5, 0.05);
+            const MatrixXd start_rl_x = trajectoryPtr->Ref_RL_x;
+            const MatrixXd start_rl_y = trajectoryPtr->Ref_RL_y;
+            const MatrixXd start_rl_z = trajectoryPtr->Ref_RL_z;
+            const MatrixXd start_ll_x = trajectoryPtr->Ref_LL_x;
+            const MatrixXd start_ll_y = trajectoryPtr->Ref_LL_y;
+            const MatrixXd start_ll_z = trajectoryPtr->Ref_LL_z;
+#endif
             trajectoryPtr->Freq_Change_Straight(0.05, 2.5, 0.05, 1.5);
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+            command32_start_trajectory_frames_ = std::min(
+                trajectoryPtr->Return_Walktime_n(),
+                static_cast<int>(trajectoryPtr->Ref_RL_x.cols())
+            );
+            for (int frame = 0; frame < command32_start_trajectory_frames_;
+                 ++frame)
+            {
+                const double normalized_time = static_cast<double>(frame)
+                    / static_cast<double>(
+                        command32_start_trajectory_frames_ - 1);
+                const double cruise_factor = normalized_time * normalized_time
+                    * (3.0 - 2.0 * normalized_time);
+                const double start_factor = 1.0 - cruise_factor;
+
+                trajectoryPtr->Ref_RL_x(0, frame) =
+                    start_factor * start_rl_x(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_RL_x(0, frame);
+                trajectoryPtr->Ref_RL_y(0, frame) =
+                    start_factor * start_rl_y(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_RL_y(0, frame);
+                trajectoryPtr->Ref_RL_z(0, frame) =
+                    start_factor * start_rl_z(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_RL_z(0, frame);
+                trajectoryPtr->Ref_LL_x(0, frame) =
+                    start_factor * start_ll_x(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_LL_x(0, frame);
+                trajectoryPtr->Ref_LL_y(0, frame) =
+                    start_factor * start_ll_y(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_LL_y(0, frame);
+                trajectoryPtr->Ref_LL_z(0, frame) =
+                    start_factor * start_ll_z(0, frame)
+                    + cruise_factor * trajectoryPtr->Ref_LL_z(0, frame);
+            }
+            RCLCPP_INFO(
+                this->get_logger(),
+                "[COMMAND32_START_TRAJECTORY] applied start-to-cruise transition over %d frames",
+                command32_start_trajectory_frames_
+            );
+#endif
             IK_Ptr->Get_Step_n(trajectoryPtr->Return_Step_n());
             IK_Ptr->Change_Angle_Compensation(2, 3, 0, -1, 2, 1, 0, -3);
             IK_Ptr->Set_Angle_Compensation(101);
@@ -861,6 +921,14 @@ void Callback::ResetMotion()
     roll_scale_reference_command_ = -1;
 #endif
 
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+    command32_start_trajectory_frames_ = 0;
+#endif
+
+#ifdef STEP_COMMAND32_COMPENSATION_TEST
+    command32_compensation_frame_ = 0;
+#endif
+
 #ifdef STEP_SAFETY_COMMAND_LOG
     // Keep the command-log frame monotonic across motion resets so multiple
     // motions remain distinguishable in one CSV. Only the roll guard state
@@ -877,6 +945,19 @@ void Callback::LogSafetyCommands(
     double roll_scale_right,
     double roll_scale_left,
     bool roll_scale_applied,
+    bool command32_start_blend,
+    double command32_blend_factor,
+    double command32_roll_blend_factor,
+    double command32_pitch_blend_factor,
+    double command32_right_pitch_blend_factor,
+    double command32_left_pitch_blend_factor,
+    double command32_roll_scale,
+    bool command32_roll_scale_applied,
+    bool command32_start_trajectory_test,
+    int command32_start_trajectory_phase,
+    bool command32_compensation_test,
+    double command32_compensation_scale,
+    const char* command32_compensation_phase,
     const std::array<bool, NUMBER_OF_DYNAMIXELS>& roll_guard_used,
     bool roll_guard_enabled
 )
@@ -964,6 +1045,19 @@ void Callback::LogSafetyCommands(
             << ",roll_scale_applied";
 #endif
         safety_command_log_
+            << ",command32_start_blend"
+            << ",command32_blend_factor"
+            << ",command32_roll_blend_factor"
+            << ",command32_pitch_blend_factor"
+            << ",command32_right_pitch_blend_factor"
+            << ",command32_left_pitch_blend_factor"
+            << ",command32_roll_scale"
+            << ",command32_roll_scale_applied"
+            << ",command32_start_trajectory_test"
+            << ",command32_start_trajectory_phase"
+            << ",command32_compensation_test"
+            << ",command32_compensation_scale"
+            << ",command32_compensation_phase"
             << ",roll_guard_enabled"
             << ",roll_guard_used_1"
             << ",roll_guard_used_5"
@@ -1025,6 +1119,19 @@ void Callback::LogSafetyCommands(
     (void)roll_scale_applied;
 #endif
     safety_command_log_
+        << ',' << (command32_start_blend ? 1 : 0)
+        << ',' << command32_blend_factor
+        << ',' << command32_roll_blend_factor
+        << ',' << command32_pitch_blend_factor
+        << ',' << command32_right_pitch_blend_factor
+        << ',' << command32_left_pitch_blend_factor
+        << ',' << command32_roll_scale
+        << ',' << (command32_roll_scale_applied ? 1 : 0)
+        << ',' << (command32_start_trajectory_test ? 1 : 0)
+        << ',' << command32_start_trajectory_phase
+        << ',' << (command32_compensation_test ? 1 : 0)
+        << ',' << command32_compensation_scale
+        << ',' << command32_compensation_phase
         << ',' << (roll_guard_enabled ? 1 : 0)
         << ',' << (roll_guard_used[1] ? 1 : 0)
         << ',' << (roll_guard_used[5] ? 1 : 0)
@@ -1038,6 +1145,10 @@ void Callback::LogSafetyCommands(
 
 void Callback::Write_All_Theta()
 {
+    bool command32_compensation_test = false;
+    double command32_compensation_scale = 1.0;
+    const char* command32_compensation_phase = "full";
+
     if (emergency == 0)
     {
         if(re == 1)
@@ -1195,7 +1306,67 @@ void Callback::Write_All_Theta()
             else if (go == 32) //forward 40step fast
             {
                 IK_Ptr->BRP_Simulation(trajectoryPtr->Ref_RL_x, trajectoryPtr->Ref_RL_y, trajectoryPtr->Ref_RL_z, trajectoryPtr->Ref_LL_x, trajectoryPtr->Ref_LL_y, trajectoryPtr->Ref_LL_z, indext);
+#ifdef STEP_COMMAND32_COMPENSATION_TEST
+                constexpr std::uint32_t COMMAND32_COMP_HOLD_FRAMES = 80;
+                constexpr std::uint32_t COMMAND32_COMP_RAMP_FRAMES = 135;
+
+                command32_compensation_test = true;
+                if (command32_compensation_frame_
+                    < COMMAND32_COMP_HOLD_FRAMES)
+                {
+                    command32_compensation_scale = 0.0;
+                    command32_compensation_phase = "hold";
+                }
+                else if (command32_compensation_frame_
+                    < COMMAND32_COMP_HOLD_FRAMES
+                        + COMMAND32_COMP_RAMP_FRAMES)
+                {
+                    const std::uint32_t ramp_frame =
+                        command32_compensation_frame_
+                        - COMMAND32_COMP_HOLD_FRAMES;
+                    const double t = static_cast<double>(ramp_frame)
+                        / static_cast<double>(
+                            COMMAND32_COMP_RAMP_FRAMES - 1);
+                    command32_compensation_scale =
+                        t * t * (3.0 - 2.0 * t);
+                    command32_compensation_phase = "ramp";
+                }
+                else
+                {
+                    command32_compensation_scale = 1.0;
+                    command32_compensation_phase = "full";
+                }
+
+                ++command32_compensation_frame_;
+
+                double rl_before_compensation[6];
+                double ll_before_compensation[6];
+                for (int joint_index = 0; joint_index < 6; ++joint_index)
+                {
+                    rl_before_compensation[joint_index] =
+                        IK_Ptr->RL_th[joint_index];
+                    ll_before_compensation[joint_index] =
+                        IK_Ptr->LL_th[joint_index];
+                }
+
                 IK_Ptr->Forward_40step_Angle_Compensation(indext);
+
+                for (int joint_index = 0; joint_index < 6; ++joint_index)
+                {
+                    IK_Ptr->RL_th[joint_index] =
+                        rl_before_compensation[joint_index]
+                        + command32_compensation_scale
+                            * (IK_Ptr->RL_th[joint_index]
+                                - rl_before_compensation[joint_index]);
+                    IK_Ptr->LL_th[joint_index] =
+                        ll_before_compensation[joint_index]
+                        + command32_compensation_scale
+                            * (IK_Ptr->LL_th[joint_index]
+                                - ll_before_compensation[joint_index]);
+                }
+#else
+                IK_Ptr->Forward_40step_Angle_Compensation(indext);
+#endif
             }
 
             else if (go == 77)
@@ -1250,6 +1421,28 @@ void Callback::Write_All_Theta()
     All_Theta[20] = pick_Ptr->RA_th[3] + 0 * DEG2RAD; // R_hand
     All_Theta[21] = pick_Ptr->NC_th[0] + 0 * DEG2RAD; // neck_RL
     All_Theta[22] = pick_Ptr->NC_th[1] - 24 * DEG2RAD; // neck_UD
+
+    bool command32_start_blend = false;
+    double command32_blend_factor = 1.0;
+    double command32_roll_blend_factor = 1.0;
+    double command32_pitch_blend_factor = 1.0;
+    double command32_right_pitch_blend_factor = 1.0;
+    double command32_left_pitch_blend_factor = 1.0;
+    double command32_roll_scale = 1.0;
+    bool command32_roll_scale_applied = false;
+    bool command32_start_trajectory_test = false;
+    int command32_start_trajectory_phase = 0;
+
+#ifdef STEP_COMMAND32_START_BLEND_TEST
+    if (go_ == 32 && command32_start_trajectory_frames_ > 0)
+    {
+        command32_start_trajectory_test = true;
+        // Phase 1: first-cycle start-to-cruise transition. Phase 2: original
+        // Freq_Change_Straight long-distance trajectory.
+        command32_start_trajectory_phase =
+            indext <= command32_start_trajectory_frames_ ? 1 : 2;
+    }
+#endif
 
 #if defined(STEP_SAFETY_COMMAND_LOG) || defined(STEP_ROLL_SCALE_TEST)
     const VectorXd raw_all_theta = All_Theta;
@@ -1344,6 +1537,19 @@ void Callback::Write_All_Theta()
         roll_scale_right,
         roll_scale_left,
         roll_scale_applied,
+        command32_start_blend,
+        command32_blend_factor,
+        command32_roll_blend_factor,
+        command32_pitch_blend_factor,
+        command32_right_pitch_blend_factor,
+        command32_left_pitch_blend_factor,
+        command32_roll_scale,
+        command32_roll_scale_applied,
+        command32_start_trajectory_test,
+        command32_start_trajectory_phase,
+        command32_compensation_test,
+        command32_compensation_scale,
+        command32_compensation_phase,
         roll_guard_used,
         roll_guard_enabled
     );
