@@ -461,3 +461,38 @@ Observation and judgment:
 6. 좌우 ankle의 pose, axis, offset, command sign이 올바른 대칭 관계인지 비교한다.
 
 다음 수정은 axis만 교체하기 전에 foot link orientation, joint frame, Gazebo offset, command sign을 하나의 좌표계에서 함께 검증한 뒤 결정한다.
+
+
+#### ankle roll command scale follow-up
+
+The ankle roll command scale test was extended after confirming that large single-joint ankle roll commands can move the Gazebo ankle roll joints.
+
+Results:
+
+- scale 2.0:
+  - Visual improvement was minimal.
+  - Foot roll mean_abs decreased only slightly.
+  - Foot pitch and yaw increased noticeably.
+  - Both feet showed worse yaw orientation.
+
+- scale 3.0:
+  - Visual result became worse.
+  - The whole leg posture appeared diagonally twisted.
+  - right_foot_link:
+    - roll mean_abs: ~0.303
+    - pitch mean_abs: ~0.191
+    - yaw mean_abs: ~0.220
+  - left_foot_link:
+    - roll mean_abs: ~0.232
+    - pitch mean_abs: ~0.148
+    - yaw mean_abs: ~0.227
+  - ankle roll tracking error remained large:
+    - left_ankle_roll max error: ~0.222
+    - right_ankle_roll max error: ~0.193
+
+Judgment:
+
+- Increasing ankle roll command scale is not a valid fix.
+- It may slightly reduce roll mean_abs, but it significantly worsens pitch/yaw orientation and twists the leg posture.
+- scale 4.0 was not tested because scale 3.0 already showed worse visual behavior.
+- The ankle roll issue should not be solved by command scaling alone.
