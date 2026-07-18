@@ -37,3 +37,8 @@ gazebo_axis_*.csv
 
 # Gazebo roll/pitch axis test outputs
 gazebo_roll_x_pitch_*.csv
+
+# Gazebo foot orientation / sign response logs
+gazebo_foot_orientation_log.csv
+gazebo_ankle_roll_sign_response_log.csv
+gazebo_ankle_roll_sign_orientation_log.csv

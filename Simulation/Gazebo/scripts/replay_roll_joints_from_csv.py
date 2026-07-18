@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import importlib
 import math
 import re
 import subprocess
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from google.protobuf import symbol_database
 
 
 LEG_JOINT_TOPICS = {
@@ -50,6 +52,12 @@ ROLL_JOINT_COLUMNS = ("RL1_wrap", "RL5_wrap", "LL1_wrap", "LL5_wrap")
 ROLL_JOINT_TOPICS = {
     column: LEG_JOINT_TOPICS[column] for column in ROLL_JOINT_COLUMNS
 }
+ANKLE_ROLL_COMMAND_TOPICS = frozenset(
+    (
+        LEG_JOINT_TOPICS["RL5_wrap"],
+        LEG_JOINT_TOPICS["LL5_wrap"],
+    )
+)
 LEFT_PITCH_JOINT_COLUMNS = frozenset(
     ("LL2_wrap", "LL3_wrap", "LL4_wrap")
 )
@@ -57,6 +65,9 @@ BASE_LATERAL_TOPIC = "/step/base_lateral_joint/cmd_pos"
 BASE_LATERAL_JOINT_NAME = "base_lateral_to_world"
 BASE_LATERAL_CSV_COLUMNS = ("COM_y", "Ycom")
 DEFAULT_TRACKING_OUTPUT = Path("gazebo_joint_tracking_log.csv")
+DEFAULT_FOOT_ORIENTATION_OUTPUT = Path("gazebo_foot_orientation_log.csv")
+DEFAULT_FOOT_POSE_TOPIC = "/world/step_test/dynamic_pose/info"
+FOOT_LINK_NAMES = ("right_foot_link", "left_foot_link")
 DEFAULT_STEP_JOINT_STATE_TOPIC = (
     "/world/step_test/model/step_humanoid/joint_state"
 )
@@ -83,6 +94,65 @@ POSITION_CONTROLLER_PLUGIN = "gz-sim-joint-position-controller-system"
 
 def angle_wrap(angle: float) -> float:
     return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def quaternion_to_rpy(x: float, y: float, z: float, w: float):
+    sin_roll = 2.0 * (w * x + y * z)
+    cos_roll = 1.0 - 2.0 * (x * x + y * y)
+    roll = math.atan2(sin_roll, cos_roll)
+
+    sin_pitch = 2.0 * (w * y - z * x)
+    pitch = math.asin(max(-1.0, min(1.0, sin_pitch)))
+
+    sin_yaw = 2.0 * (w * z + x * y)
+    cos_yaw = 1.0 - 2.0 * (y * y + z * z)
+    yaw = math.atan2(sin_yaw, cos_yaw)
+    return roll, pitch, yaw
+
+
+def scoped_name_matches(name: str, target: str) -> bool:
+    return (
+        name == target
+        or name.endswith(target)
+        or target in name
+        or name.split("::")[-1] == target
+    )
+
+
+def load_pose_protobuf_types():
+    """Import and register a compatible Pose / Pose_V protobuf pair."""
+    module_pairs = (
+        ("gz.msgs10.pose_pb2", "gz.msgs10.pose_v_pb2"),
+        ("gz.msgs11.pose_pb2", "gz.msgs11.pose_v_pb2"),
+        ("gz.msgs.pose_pb2", "gz.msgs.pose_v_pb2"),
+    )
+    import_errors = []
+    for pose_module_name, pose_v_module_name in module_pairs:
+        try:
+            pose_module = importlib.import_module(pose_module_name)
+            pose_v_module = importlib.import_module(pose_v_module_name)
+        except ImportError as error:
+            import_errors.append(
+                f"{pose_module_name} / {pose_v_module_name}: {error}"
+            )
+            continue
+
+        pose_type = pose_module.Pose
+        pose_v_type = pose_v_module.Pose_V
+        if pose_type.DESCRIPTOR.full_name != "gz.msgs.Pose":
+            continue
+        if pose_v_type.DESCRIPTOR.full_name != "gz.msgs.Pose_V":
+            continue
+
+        protobuf_symbols = symbol_database.Default()
+        protobuf_symbols.RegisterMessage(pose_type)
+        protobuf_symbols.RegisterMessage(pose_v_type)
+        return pose_module, pose_v_module, pose_v_type
+
+    raise ImportError(
+        "Could not import a compatible Gazebo Pose/Pose_V protobuf pair: "
+        + " | ".join(import_errors)
+    )
 
 
 def command_from_csv(
@@ -139,6 +209,21 @@ def frame_commands(
         )
         commands.append((column, BASE_LATERAL_TOPIC, csv_value, command))
     return commands
+
+
+def scale_ankle_roll_commands(commands, scale: float):
+    """Return publish-ready commands with ankle-roll commands scaled."""
+    return [
+        (
+            column,
+            topic,
+            csv_value,
+            command * scale
+            if topic in ANKLE_ROLL_COMMAND_TOPICS
+            else command,
+        )
+        for column, topic, csv_value, command in commands
+    ]
 
 
 def unwrap_joint_command_frames(prepared_frames, joint_topics):
@@ -324,6 +409,72 @@ class JointTrackingSubscriber:
     def snapshot(self):
         with self.lock:
             return dict(self.positions), self.received_message
+
+
+class FootOrientationSubscriber:
+    def __init__(self, topic, foot_link_names):
+        from gz.transport13 import Node
+
+        pose_module, pose_v_module, pose_v_type = load_pose_protobuf_types()
+        self.pose_message_module = pose_module
+        self.pose_v_message_module = pose_v_module
+        self.message_type = pose_v_type
+        self.lock = threading.Lock()
+        self.poses = {}
+        self.received_message = False
+        self.received_names = []
+        self.foot_link_names = tuple(foot_link_names)
+        self.node = Node()
+        subscribed = self.node.subscribe(
+            self.message_type, topic, self.on_pose
+        )
+        if subscribed is False:
+            raise RuntimeError(f"Failed to subscribe to {topic}")
+
+    def on_pose(self, message):
+        poses = {}
+        received_names = []
+        try:
+            for pose in message.pose:
+                received_names.append(str(pose.name))
+                for link_name in self.foot_link_names:
+                    if not scoped_name_matches(pose.name, link_name):
+                        continue
+                    orientation = pose.orientation
+                    roll, pitch, yaw = quaternion_to_rpy(
+                        float(orientation.x),
+                        float(orientation.y),
+                        float(orientation.z),
+                        float(orientation.w),
+                    )
+                    poses[link_name] = (
+                        float(pose.position.x),
+                        float(pose.position.y),
+                        float(pose.position.z),
+                        roll,
+                        pitch,
+                        yaw,
+                    )
+                    break
+        except TypeError as error:
+            print(
+                "[WARNING] Could not access Pose_V.pose after explicit "
+                f"Pose registration: {error}"
+            )
+            return
+
+        with self.lock:
+            self.poses.update(poses)
+            self.received_names.extend(received_names)
+            self.received_message = True
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.poses), self.received_message
+
+    def pose_names_snapshot(self):
+        with self.lock:
+            return list(self.received_names)
 
 
 class GazeboDoublePublishers:
@@ -517,6 +668,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--log-foot-orientation",
+        action="store_true",
+        help=(
+            "Log right_foot_link and left_foot_link world poses to "
+            "gazebo_foot_orientation_log.csv"
+        ),
+    )
+    parser.add_argument(
+        "--ankle-roll-command-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Scale only right/left ankle-roll commands immediately before "
+            "Gazebo publish (default: 1.0)"
+        ),
+    )
+    parser.add_argument(
         "--joint-state-topic",
         default=None,
         metavar="TOPIC",
@@ -571,6 +739,12 @@ def main():
         raise ValueError("--progress-every must be greater than 0")
     if args.base_lateral_scale < 0.0:
         raise ValueError("--base-lateral-scale must be greater than or equal to 0")
+    if not math.isfinite(args.ankle_roll_command_scale):
+        parser.error("--ankle-roll-command-scale must be finite")
+    if args.ankle_roll_command_scale < 0.0:
+        parser.error(
+            "--ankle-roll-command-scale must be greater than or equal to 0"
+        )
     if args.lock_base_lateral and args.replay_base_lateral_from_com_y:
         parser.error(
             "--lock-base-lateral cannot be combined with "
@@ -677,6 +851,11 @@ def main():
         )
         print(f"lock_base_lateral: {args.lock_base_lateral}")
         print(f"log_joint_tracking: {args.log_joint_tracking}")
+        print(f"log_foot_orientation: {args.log_foot_orientation}")
+        print(
+            "ankle_roll_command_scale: "
+            f"{args.ankle_roll_command_scale:g}"
+        )
         print(f"base_lateral_axis_sign: {args.base_lateral_axis_sign:+d}")
         print(f"base_lateral_scale: {args.base_lateral_scale:g}")
         print(f"hold_start: {args.hold_start}")
@@ -834,6 +1013,39 @@ def main():
         )
         print(f"[JOINT TRACKING] output={DEFAULT_TRACKING_OUTPUT}")
 
+    foot_pose_subscriber = None
+    foot_orientation_output_file = None
+    foot_orientation_writer = None
+    if args.log_foot_orientation:
+        print(f"[FOOT ORIENTATION] pose topic={DEFAULT_FOOT_POSE_TOPIC}")
+        if args.dry_run:
+            print(
+                "[WARNING] Dry-run does not subscribe to the Gazebo pose "
+                "topic; foot poses will be NaN."
+            )
+        else:
+            try:
+                foot_pose_subscriber = FootOrientationSubscriber(
+                    DEFAULT_FOOT_POSE_TOPIC, FOOT_LINK_NAMES
+                )
+            except (ImportError, RuntimeError) as error:
+                print(
+                    "[WARNING] Could not subscribe to Gazebo pose topic "
+                    f"{DEFAULT_FOOT_POSE_TOPIC}: {error}. Foot poses will "
+                    "be NaN."
+                )
+
+        foot_orientation_output_file = (
+            DEFAULT_FOOT_ORIENTATION_OUTPUT.open("w", newline="")
+        )
+        foot_orientation_writer = csv.writer(foot_orientation_output_file)
+        foot_orientation_writer.writerow(
+            ("frame", "time", "link_name", "x", "y", "z", "roll", "pitch", "yaw")
+        )
+        print(
+            f"[FOOT ORIENTATION] output={DEFAULT_FOOT_ORIENTATION_OUTPUT}"
+        )
+
     prepared_frames = []
     for _, row in selected.iterrows():
         commands = frame_commands(
@@ -869,13 +1081,16 @@ def main():
             )
 
         for publish_index in range(publish_count):
+            publish_commands = scale_ankle_roll_commands(
+                hold_commands, args.ankle_roll_command_scale
+            )
             if args.verbose:
                 print_command_details(
                     f"[HOLD {publish_index + 1}/{publish_count}]",
                     hold_frame,
-                    hold_commands,
+                    publish_commands,
                 )
-            gazebo_publishers.publish(hold_commands)
+            gazebo_publishers.publish(publish_commands)
 
             time.sleep(args.dt)
 
@@ -885,20 +1100,23 @@ def main():
     published_frames = 0
 
     for replay_index, (frame, commands) in enumerate(prepared_frames):
+        publish_commands = scale_ankle_roll_commands(
+            commands, args.ankle_roll_command_scale
+        )
 
         if args.dry_run:
-            print_command_details("[DRY RUN]", frame, commands)
+            print_command_details("[DRY RUN]", frame, publish_commands)
         elif args.verbose:
-            print_command_details("[VERBOSE]", frame, commands)
+            print_command_details("[VERBOSE]", frame, publish_commands)
         if frame == args.check_publish_frame:
             check_label = (
                 "[CHECK PUBLISH][DRY RUN]"
                 if args.dry_run
                 else "[CHECK PUBLISH]"
             )
-            print_command_details(check_label, frame, commands)
+            print_command_details(check_label, frame, publish_commands)
 
-        gazebo_publishers.publish(commands)
+        gazebo_publishers.publish(publish_commands)
         published_frames += 1
 
         if (
@@ -920,7 +1138,7 @@ def main():
                 actual_positions, received_state = tracking_subscriber.snapshot()
             command_positions = {
                 joint_name_from_command_topic(topic): command
-                for _, topic, _, command in commands
+                for _, topic, _, command in publish_commands
                 if joint_name_from_command_topic(topic) is not None
             }
             elapsed_time = time.monotonic() - replay_start_time
@@ -952,6 +1170,26 @@ def main():
                     "joints."
                 )
 
+        if foot_orientation_writer is not None:
+            foot_poses = {}
+            received_pose = False
+            if foot_pose_subscriber is not None:
+                foot_poses, received_pose = foot_pose_subscriber.snapshot()
+            elapsed_time = time.monotonic() - replay_start_time
+            for link_name in FOOT_LINK_NAMES:
+                pose_values = foot_poses.get(link_name, (math.nan,) * 6)
+                foot_orientation_writer.writerow(
+                    (frame, elapsed_time, link_name, *pose_values)
+                )
+
+            if not received_pose and replay_index == last_replay_index:
+                print(
+                    "[WARNING] No Gazebo pose message was received during "
+                    f"replay from {DEFAULT_FOOT_POSE_TOPIC}. Check "
+                    "'gz topic -l' and verify that the world loads the "
+                    "scene broadcaster system."
+                )
+
     print(
         f"[REPLAY] done. published_frames={published_frames}, "
         f"topics_per_frame={len(publish_topics)}"
@@ -970,8 +1208,24 @@ def main():
                 f"{', '.join(missing_tracking_joints)}. Verify the "
                 "gz-sim-joint-state-publisher-system <joint_name> settings."
             )
+    if foot_pose_subscriber is not None:
+        final_foot_poses, _ = foot_pose_subscriber.snapshot()
+        missing_foot_links = [
+            link_name
+            for link_name in FOOT_LINK_NAMES
+            if link_name not in final_foot_poses
+        ]
+        if missing_foot_links:
+            print(
+                f"[WARNING] Pose topic {DEFAULT_FOOT_POSE_TOPIC} did not "
+                "provide the requested links: "
+                f"{', '.join(missing_foot_links)}. Check scoped link names "
+                "with 'gz topic -e'."
+            )
     if tracking_output_file is not None:
         tracking_output_file.close()
+    if foot_orientation_output_file is not None:
+        foot_orientation_output_file.close()
 
 
 if __name__ == "__main__":
