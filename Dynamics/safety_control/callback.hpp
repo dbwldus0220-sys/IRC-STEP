@@ -54,6 +54,12 @@ private:
     int roll_scale_reference_command_ = -1;
 #endif
 
+#ifdef STEP_COMMAND1_HIP_ROLL_SCALE_TEST
+    VectorXd command1_hip_roll_reference_ =
+        VectorXd::Zero(NUMBER_OF_DYNAMIXELS);
+    bool command1_hip_roll_reference_initialized_ = false;
+#endif
+
 #ifdef STEP_COMMAND32_START_BLEND_TEST
     int command32_start_trajectory_frames_ = 0;
 #endif
@@ -72,6 +78,8 @@ private:
         double roll_scale_right,
         double roll_scale_left,
         bool roll_scale_applied,
+        double command1_hip_roll_scale,
+        bool command1_hip_roll_scale_applied,
         bool command32_start_blend,
         double command32_blend_factor,
         double command32_roll_blend_factor,

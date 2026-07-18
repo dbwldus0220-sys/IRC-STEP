@@ -537,3 +537,40 @@ Current judgment:
 - Best visual candidate: hip roll scale 0.00.
 - Safer fallback candidate: hip roll scale 0.10.
 - The final implementation should keep this as a command-1-specific test option first, instead of applying it globally.
+
+
+
+#### Command 1 code-level hip roll scale verification
+
+The command-1 hip roll scale option was implemented in safety_control and verified through dry-run logging and Gazebo replay.
+
+Dry-run verification:
+
+- `command1_hip_roll_scale = 0`
+- `command1_hip_roll_scale_applied = 1`
+- `safe_1` range: 0.0
+- `safe_7` range: 0.0
+
+This confirms that the right and left hip roll commands are held at their command-1 reference values when the option is enabled.
+
+Gazebo replay result using the code-generated dry-run CSV:
+
+- The legs extended forward much more cleanly.
+- The diagonal twisting was almost removed visually.
+- The result was clearly better than the original command 1.
+- It did not look weaker than the previous 10% hip-roll candidate.
+
+Representative foot orientation result:
+
+- right_foot_link pitch mean_abs: ~0.0141
+- left_foot_link pitch mean_abs: ~0.0046
+- right_foot_link frame 100 pitch: ~-0.0702
+- right_foot_link frame 102 pitch: ~-0.0708
+- left_foot_link frame 177 pitch: ~0.0117
+- left_foot_link frame 304 pitch: ~0.0145
+
+Judgment:
+
+- The safety_control implementation matches the previous manual CSV hiproll0 diagnostic result.
+- Current best Gazebo candidate for command 1: command-1 hip roll scale 0.0.
+- Keep this as a command-1-specific test option for now, not a global walking change.

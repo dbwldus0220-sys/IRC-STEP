@@ -921,6 +921,11 @@ void Callback::ResetMotion()
     roll_scale_reference_command_ = -1;
 #endif
 
+#ifdef STEP_COMMAND1_HIP_ROLL_SCALE_TEST
+    command1_hip_roll_reference_.setZero();
+    command1_hip_roll_reference_initialized_ = false;
+#endif
+
 #ifdef STEP_COMMAND32_START_BLEND_TEST
     command32_start_trajectory_frames_ = 0;
 #endif
@@ -945,6 +950,8 @@ void Callback::LogSafetyCommands(
     double roll_scale_right,
     double roll_scale_left,
     bool roll_scale_applied,
+    double command1_hip_roll_scale,
+    bool command1_hip_roll_scale_applied,
     bool command32_start_blend,
     double command32_blend_factor,
     double command32_roll_blend_factor,
@@ -1047,6 +1054,8 @@ void Callback::LogSafetyCommands(
             << ",roll_scale_applied";
 #endif
         safety_command_log_
+            << ",command1_hip_roll_scale"
+            << ",command1_hip_roll_scale_applied"
             << ",command32_start_blend"
             << ",command32_blend_factor"
             << ",command32_roll_blend_factor"
@@ -1123,6 +1132,8 @@ void Callback::LogSafetyCommands(
     (void)roll_scale_applied;
 #endif
     safety_command_log_
+        << ',' << command1_hip_roll_scale
+        << ',' << (command1_hip_roll_scale_applied ? 1 : 0)
         << ',' << (command32_start_blend ? 1 : 0)
         << ',' << command32_blend_factor
         << ',' << command32_roll_blend_factor
@@ -1494,8 +1505,47 @@ void Callback::Write_All_Theta()
     }
 #endif
 
-#if defined(STEP_SAFETY_COMMAND_LOG) || defined(STEP_ROLL_SCALE_TEST)
+#if defined(STEP_SAFETY_COMMAND_LOG) \
+    || defined(STEP_ROLL_SCALE_TEST) \
+    || defined(STEP_COMMAND1_HIP_ROLL_SCALE_TEST)
     const VectorXd raw_all_theta = All_Theta;
+#endif
+
+    double command1_hip_roll_scale = 1.0;
+    bool command1_hip_roll_scale_applied = false;
+
+#ifdef STEP_COMMAND1_HIP_ROLL_SCALE_TEST
+    constexpr double kCommand1HipRollScale =
+        STEP_COMMAND1_HIP_ROLL_SCALE_VALUE;
+    static_assert(
+        kCommand1HipRollScale >= 0.0,
+        "Command-1 hip-roll scale must be non-negative"
+    );
+
+    if (go_ == 1)
+    {
+        command1_hip_roll_scale = kCommand1HipRollScale;
+        if (!command1_hip_roll_reference_initialized_)
+        {
+            command1_hip_roll_reference_ = raw_all_theta;
+            command1_hip_roll_reference_initialized_ = true;
+        }
+
+        constexpr int hip_roll_joint_indices[] = {1, 7};
+        for (int joint_index : hip_roll_joint_indices)
+        {
+            All_Theta[joint_index] =
+                command1_hip_roll_reference_[joint_index]
+                + command1_hip_roll_scale
+                    * (raw_all_theta[joint_index]
+                        - command1_hip_roll_reference_[joint_index]);
+        }
+        command1_hip_roll_scale_applied = true;
+    }
+    else
+    {
+        command1_hip_roll_reference_initialized_ = false;
+    }
 #endif
 
     double roll_scale_right = 1.0;
@@ -1587,6 +1637,8 @@ void Callback::Write_All_Theta()
         roll_scale_right,
         roll_scale_left,
         roll_scale_applied,
+        command1_hip_roll_scale,
+        command1_hip_roll_scale_applied,
         command32_start_blend,
         command32_blend_factor,
         command32_roll_blend_factor,

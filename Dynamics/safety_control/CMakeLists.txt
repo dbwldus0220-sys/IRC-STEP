@@ -7,6 +7,10 @@ option(STEP_DRY_RUN_NO_DXL
   "Run safety_control_node without Dynamixel hardware communication" OFF)
 option(STEP_ROLL_SCALE_TEST
   "Enable command-specific roll scale testing" OFF)
+option(STEP_COMMAND1_HIP_ROLL_SCALE_TEST
+  "Scale only command_1 hip-roll variation around its first frame" OFF)
+set(STEP_COMMAND1_HIP_ROLL_SCALE "1.0" CACHE STRING
+  "Command_1 hip-roll variation scale used by the diagnostic test")
 option(STEP_COMMAND32_START_BLEND_TEST
   "Use a command_1-style start trajectory during command_32's first cycle" OFF)
 option(STEP_COMMAND32_COMPENSATION_TEST
@@ -62,6 +66,24 @@ if(STEP_ROLL_SCALE_TEST)
   target_compile_definitions(safety_control_node PRIVATE STEP_ROLL_SCALE_TEST=1)
   message(WARNING
     "STEP_ROLL_SCALE_TEST is enabled: command-specific roll scaling is active")
+endif()
+
+if(STEP_COMMAND1_HIP_ROLL_SCALE_TEST AND STEP_ROLL_SCALE_TEST)
+  message(FATAL_ERROR
+    "STEP_COMMAND1_HIP_ROLL_SCALE_TEST and STEP_ROLL_SCALE_TEST both modify hip roll; enable only one")
+endif()
+
+if(STEP_COMMAND1_HIP_ROLL_SCALE_TEST)
+  if(NOT STEP_COMMAND1_HIP_ROLL_SCALE MATCHES
+      "^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$")
+    message(FATAL_ERROR
+      "STEP_COMMAND1_HIP_ROLL_SCALE must be a non-negative numeric literal")
+  endif()
+  target_compile_definitions(safety_control_node PRIVATE
+    STEP_COMMAND1_HIP_ROLL_SCALE_TEST=1
+    STEP_COMMAND1_HIP_ROLL_SCALE_VALUE=${STEP_COMMAND1_HIP_ROLL_SCALE})
+  message(WARNING
+    "STEP_COMMAND1_HIP_ROLL_SCALE_TEST is enabled: command_1 hip-roll variation scale=${STEP_COMMAND1_HIP_ROLL_SCALE}")
 endif()
 
 if(STEP_COMMAND32_START_BLEND_TEST)
