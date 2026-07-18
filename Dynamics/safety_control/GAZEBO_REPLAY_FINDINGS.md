@@ -322,3 +322,108 @@ Next check:
 - Run a single-joint Gazebo tracking test for right_ankle_roll_joint and left_ankle_roll_joint.
 - If the joint fails to track even without walking contact, inspect the Gazebo controller/SDF/joint axis/effort limit.
 - If the joint tracks well alone, focus on foot-ground contact, sole collision, and command_1 landing/support timing.
+
+
+## Ankle axis 원인 분리 결과
+
+Command 1에서 발바닥이 지면과 수평을 이루지 못하고 ankle tracking error가 크게 나타나는 원인을 분리하기 위해 fixed-base 모델의 foot collision, controller gain/effort, ankle joint axis를 각각 변경해 비교했다.
+
+### Original SDF 기준 결과
+
+- 기준 모델은 `step_fixed_base_ctrl_joint_state.sdf`이다.
+- Command 1 replay에서 발바닥 수평이 잘 맞지 않았고 ankle tracking error가 크게 나타났다.
+- Single-joint test에서도 ankle pitch/roll의 actual range가 command range에 비해 매우 작았다.
+- 반면 같은 script와 controller 구조를 사용하는 `right_hip_roll_joint`는 정상적으로 추종했다.
+- 이후 비교에서도 Command 1 replay의 기준은 original SDF로 유지한다.
+
+### Foot collision 제거 테스트
+
+- `step_fixed_base_ctrl_joint_state_no_foot_collision.sdf`에서 양쪽 foot link의 collision만 제거했다.
+- Foot visual, controller plugin, joint-state publisher는 유지했다.
+- Foot collision을 제거해도 ankle single-joint tracking은 개선되지 않았다.
+- 따라서 foot collision만으로 ankle motion이 제한되는 문제는 아니다.
+
+### Ankle gain/effort 강화 테스트
+
+- `step_fixed_base_ctrl_joint_state_ankle_strong.sdf`에서 네 ankle joint만 다음과 같이 강화했다.
+  - effort limit: `8.4 -> 100`
+  - P gain: `20 -> 100`
+  - I gain: `0` 유지
+  - D gain: `1 -> 5`
+- Gain과 effort를 크게 올려도 ankle tracking은 개선되지 않았다.
+- 따라서 controller gain 또는 effort 부족만으로 현재 현상을 설명할 수 없다.
+
+### Axis-only 테스트
+
+네 ankle joint의 axis를 원본 `0 0 1`에서 동일한 후보 축으로 바꾸는 single-joint test를 수행했다.
+
+| Test model | Ankle axis | 주요 결과 |
+|---|---|---|
+| Original / axis Z | `0 0 1` | Ankle pitch/roll actual range가 매우 작음 |
+| Axis Y | `0 1 0` | Ankle roll actual range가 약 `0.10~0.12 rad`로 증가 |
+| Axis X | `1 0 0` | Ankle roll actual range가 약 `0.265 rad`까지 증가 |
+
+Axis X single-joint tracking 결과:
+
+- `right_ankle_roll_joint`
+  - command range: `0.4 rad`
+  - actual range: 약 `0.266 rad`
+  - max error: 약 `0.115 rad`
+  - mean error: 약 `0.062 rad`
+  - correlation: 약 `0.897`
+- `left_ankle_roll_joint`
+  - command range: `0.4 rad`
+  - actual range: 약 `0.265 rad`
+  - max error: 약 `0.154 rad`
+  - mean error: 약 `0.062 rad`
+  - correlation: 약 `0.898`
+- `right_ankle_pitch_joint`
+  - command range: `0.4 rad`
+  - actual range: 약 `0.117 rad`
+  - max error: 약 `0.170 rad`
+  - mean error: 약 `0.114 rad`
+  - correlation: 약 `0.517`
+- 비교 기준인 `right_hip_roll_joint`는 actual range 약 `0.380 rad`, correlation 약 `0.996`으로 정상 추종했다.
+
+Axis X는 ankle roll의 single-joint tracking 수치를 가장 크게 개선했지만 Command 1 replay의 자세 품질은 오히려 나빠졌다.
+
+- 발이 사선 방향으로 비틀렸다.
+- 왼발도 바닥과 수평을 이루지 못했다.
+- 전체 보행 자세가 original SDF보다 나빠졌다.
+
+### Roll X / Pitch Y 분리 테스트
+
+- 양쪽 ankle roll axis는 `1 0 0`으로 설정했다.
+- 양쪽 ankle pitch axis는 `0 1 0`으로 설정했다.
+- Ankle roll의 single-joint tracking 수치는 현재 테스트 중 가장 좋아졌다.
+- 그러나 시작 자세부터 양발이 사선으로 비틀렸다.
+- 왼발은 일부 구간에서 수평에 가까워졌지만 오른발은 계속 수평을 이루지 못했다.
+- Tracking 수치 개선이 올바른 foot orientation이나 보행 자세를 의미하지 않는다는 점을 확인했다.
+
+### 종합 판단
+
+- 단순히 ankle axis만 X 또는 Y로 교체하는 방식은 최종 해결책으로 사용하면 안 된다.
+- Axis-only 변경은 single-joint tracking actual range를 증가시키지만 initial pose와 foot orientation을 망가뜨린다.
+- 따라서 현재 문제는 joint axis 하나의 오류라기보다 다음 요소 사이의 불일치 가능성이 높다.
+  - ankle joint pose와 joint frame
+  - joint axis가 표현되는 frame
+  - foot link의 초기 orientation
+  - Gazebo zero-position offset
+  - replay command의 부호와 joint positive direction
+- `ankle_axis_x`, `ankle_axis_y`, `ankle_axis_z`, `roll_x_pitch_y`, `roll_x_pitch_z` 모델과 world는 원인 분리용 diagnostic files로만 유지한다.
+- Axis-only modified SDF는 Command 1 보행 replay나 실제 로봇 제어 모델로 사용하지 않는다.
+
+### 다음 진단 단계
+
+1. Original `step_fixed_base_ctrl_joint_state.sdf`와 original Command 1 replay를 기준선으로 유지한다.
+2. Command 1 첫 프레임에서 다음 orientation을 original 모델과 diagnostic 모델 사이에서 비교한다.
+   - `right_ankle_link`
+   - `left_ankle_link`
+   - `right_foot_link`
+   - `left_foot_link`
+3. 각 ankle joint에 대해 joint pose 회전과 axis를 같은 reference frame으로 변환하여 실제 회전축을 비교한다.
+4. CSV의 첫 command 값, Gazebo joint zero position, visual/collision의 초기 orientation 사이에 offset이 있는지 확인한다.
+5. 작은 양수 명령을 한 관절씩 입력하고 link가 회전하는 실제 방향을 기록하여 command sign과 joint positive direction을 확인한다.
+6. 좌우 ankle의 pose, axis, offset, command sign이 올바른 대칭 관계인지 비교한다.
+
+다음 수정은 axis만 교체하기 전에 foot link orientation, joint frame, Gazebo offset, command sign을 하나의 좌표계에서 함께 검증한 뒤 결정한다.

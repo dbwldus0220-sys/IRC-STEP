@@ -28,3 +28,12 @@ gazebo_joint_tracking_log.csv
 # Python cache
 __pycache__/
 **/__pycache__/
+
+# Gazebo single-joint tracking test outputs
+gazebo_single_joint_tracking_log.csv
+gazebo_single_*.csv
+gazebo_strong_*.csv
+gazebo_axis_*.csv
+
+# Gazebo roll/pitch axis test outputs
+gazebo_roll_x_pitch_*.csv
