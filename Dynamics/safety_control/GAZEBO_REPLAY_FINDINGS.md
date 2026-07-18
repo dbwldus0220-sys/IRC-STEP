@@ -574,3 +574,79 @@ Judgment:
 - The safety_control implementation matches the previous manual CSV hiproll0 diagnostic result.
 - Current best Gazebo candidate for command 1: command-1 hip roll scale 0.0.
 - Keep this as a command-1-specific test option for now, not a global walking change.
+
+
+#### Command 32 hip roll scale diagnostic
+
+After verifying that the command-1 hip roll scale option does not affect command 32, command 32 was replayed as a regression check.
+
+Observation with command 32 baseline after the existing hold/ramp compensation:
+
+- The initial side kick did not return.
+- However, both legs still showed diagonal twisting during forward extension.
+
+A manual Gazebo replay CSV was then generated with the command 32 hip roll variation removed:
+
+- `RL1_wrap` and `LL1_wrap` were held at their first-frame reference values.
+- This corresponds to hip roll scale 0.0 for command 32.
+
+Visual result:
+
+- The initial side kick still did not appear.
+- The diagonal leg twisting was clearly reduced.
+- The legs extended more cleanly forward.
+- The motion did not look weak or awkward.
+
+Judgment:
+
+- Command 32 appears to have the same hip-roll-overvariation issue as command 1.
+- The existing command32 hold/ramp compensation should remain.
+- A separate command-32-specific hip roll scale test option should be added later.
+- This should not reuse the command-1 option globally; command 1 and command 32 should have independent scale controls.
+
+
+
+
+
+#### Command 32 code-level hip roll scale verification
+
+A command-32-specific hip roll scale option was implemented and verified through dry-run logging and Gazebo replay.
+
+Dry-run verification:
+
+- go unique: [32]
+- command1_hip_roll_scale: [1]
+- command1_hip_roll_scale_applied: [0]
+- command32_hip_roll_scale: [0]
+- command32_hip_roll_scale_applied: [1]
+- safe_1 range: 0.0
+- safe_7 range: 0.0
+
+This confirms that the command-32 hip roll scale option is independent from the command-1 option and only applies during command 32.
+
+Gazebo replay result using the code-generated dry-run CSV:
+
+- The initial side kick did not appear.
+- The diagonal leg twisting was removed visually.
+- The legs did not look weak or awkward.
+- The existing command32 hold/ramp compensation remained effective.
+
+Representative foot orientation result:
+
+- right_foot_link pitch mean_abs: ~0.0077
+- left_foot_link pitch mean_abs: ~0.0058
+- right_foot_link pitch max_abs: ~0.0457
+- left_foot_link pitch max_abs: ~0.0335
+
+Joint tracking result:
+
+- right_ankle_pitch_joint max_abs_error: ~0.1768
+- left_ankle_roll_joint max_abs_error: ~0.1414
+- right_ankle_roll_joint max_abs_error: ~0.1331
+- hip roll tracking errors remained very small.
+
+Judgment:
+
+- Command 32 had the same hip-roll-overvariation issue as command 1.
+- A command-32-specific hip roll scale of 0.0 is currently the best Gazebo candidate.
+- This should remain command-specific and should not be applied globally to all motions.
