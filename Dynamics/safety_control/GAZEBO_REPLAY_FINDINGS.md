@@ -650,3 +650,15 @@ Judgment:
 - Command 32 had the same hip-roll-overvariation issue as command 1.
 - A command-32-specific hip roll scale of 0.0 is currently the best Gazebo candidate.
 - This should remain command-specific and should not be applied globally to all motions.
+
+
+### Build modes
+
+Default dry-run build:
+
+```bash
+colcon build \
+  --base-paths safety_control \
+  --packages-select robot_msgs \
+  --cmake-clean-cache \
+  --cmake-args -DSTEP_DRY_RUN_NO_DXL=ON
