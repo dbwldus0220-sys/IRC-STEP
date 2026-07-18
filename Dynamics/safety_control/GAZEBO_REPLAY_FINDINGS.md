@@ -496,3 +496,44 @@ Judgment:
 - It may slightly reduce roll mean_abs, but it significantly worsens pitch/yaw orientation and twists the leg posture.
 - scale 4.0 was not tested because scale 3.0 already showed worse visual behavior.
 - The ankle roll issue should not be solved by command scaling alone.
+
+
+
+#### Command 1 hip roll scale diagnostic
+
+The largest visual improvement for command 1 came from reducing hip roll command variation.
+
+Tested variants:
+
+- hip roll scale 0.50
+- hip roll scale 0.25
+- hip roll scale 0.10
+- hip roll scale 0.00
+
+Observations:
+
+- 0.50 reduced the diagonal twisting compared with the original command.
+- 0.25 improved the forward leg extension further.
+- 0.10 looked straighter than 0.25.
+- 0.00 looked similar to 0.10 and produced the cleanest forward extension in the visual check.
+
+Numerical trend:
+
+- Foot roll mean_abs did not significantly improve.
+- Foot pitch mean_abs decreased strongly as hip roll scale was reduced.
+- This means the visible diagonal twisting was mainly caused by hip roll / lateral posture, not by ankle roll alone.
+
+Representative hiproll0 result:
+
+- right_foot_link pitch mean_abs: ~0.0146
+- left_foot_link pitch mean_abs: ~0.0052
+- right_foot_link target frame 100 pitch: ~-0.0739
+- right_foot_link target frame 102 pitch: ~-0.0785
+- left_foot_link target frame 177 pitch: ~0.0156
+- left_foot_link target frame 304 pitch: ~0.0195
+
+Current judgment:
+
+- Best visual candidate: hip roll scale 0.00.
+- Safer fallback candidate: hip roll scale 0.10.
+- The final implementation should keep this as a command-1-specific test option first, instead of applying it globally.
