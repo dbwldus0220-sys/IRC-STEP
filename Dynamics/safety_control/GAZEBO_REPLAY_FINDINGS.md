@@ -281,3 +281,44 @@ Judgment:
 - The remaining shaking is not unique to command_3.
 - The issue is more likely related to the step-in-place / turn-type motion family, foot-ground contact, collision/friction modeling, or Gazebo base constraint effects.
 - Further tuning of command_3-only compensation is unlikely to be efficient at this stage.
+
+
+
+
+#### command_1 fixed-base joint tracking
+
+Command_1 was replayed in the fixed-base joint-state Gazebo world.
+
+Visual observation:
+
+- The initial right-leg lateral kick was not observed.
+- No large rotation or snap occurred through the replay.
+- Both legs still bent sideways, with the right leg showing stronger lateral bending.
+- The ankles appeared to under-rotate rather than over-rotate, so the soles did not stay level with the ground.
+
+Tracking result:
+
+- right_ankle_roll_joint:
+  - max error ≈ 0.192 rad
+  - mean error ≈ 0.085 rad
+- left_ankle_roll_joint:
+  - max error ≈ 0.166 rad
+  - mean error ≈ 0.087 rad
+- right_ankle_pitch_joint:
+  - max error ≈ 0.173 rad
+  - mean error ≈ 0.072 rad
+- left_ankle_pitch_joint:
+  - max error ≈ 0.017 rad
+  - mean error ≈ 0.007 rad
+
+Observation:
+
+- The largest errors were concentrated in ankle roll, especially the right ankle roll.
+- For right_ankle_roll_joint, command_position reached about 0.18~0.20 rad while actual_position stayed near 0 rad.
+- This suggests that the right ankle roll joint may not be following the command under Gazebo replay, or that foot-ground contact is preventing the commanded ankle roll motion.
+
+Next check:
+
+- Run a single-joint Gazebo tracking test for right_ankle_roll_joint and left_ankle_roll_joint.
+- If the joint fails to track even without walking contact, inspect the Gazebo controller/SDF/joint axis/effort limit.
+- If the joint tracks well alone, focus on foot-ground contact, sole collision, and command_1 landing/support timing.
