@@ -256,3 +256,49 @@ Important real-robot note:
 - command_92 is currently the riskiest stage because it moves the whole robot to CENTER.
 - command_93 moves the robot to WALK_READY.
 - command_1 is only the first low-risk walking command allowed by the current gate; it is not a full approval for unrestricted walking.
+
+
+### Hip roll scale candidates before real-robot testing
+
+Gazebo validation found that excessive hip roll variation was the main cause of diagonal leg twisting in command 1 and command 32.
+
+Current Gazebo candidates:
+
+- command 1: hip roll scale 0.0
+- command 32: hip roll scale 0.0
+
+Important safety notes:
+
+- These are Gazebo candidates only.
+- They must not be treated as final real-robot parameters.
+- Command 32 should remain blocked by the real-robot command gate until separate approval.
+- Command 1 should only be tested after motor direction signs, zero offsets, and joint limits are confirmed.
+- The first real-robot test should use a short, low-risk command 1 trial with conservative torque/speed settings.
+- If the robot leans, twists, or loads the ankle/hip unexpectedly, stop immediately.
+
+### Real-robot command gate dry-run verification
+
+The real-robot command gate was checked in dry-run mode with `STEP_REAL_ROBOT_COMMAND_GATE=ON` and `STEP_REAL_ROBOT_STARTUP_SAFE=ON`.
+
+Command 32 single-command test:
+
+- command sent: 32
+- safety_all_theta_command_log.csv was not generated
+- judgment: command 32 did not enter trajectory logging/execution
+
+Command 2 single-command test:
+
+- command sent: 2
+- safety_all_theta_command_log.csv was not generated
+- judgment: command 2 did not enter trajectory logging/execution
+
+Command 3 single-command test:
+
+- command sent: 3
+- safety_all_theta_command_log.csv was not generated
+- judgment: command 3 did not enter trajectory logging/execution
+
+Conclusion:
+
+- command 2, command 3, and command 32 remain blocked for real-robot testing.
+- command 32 is still only a Gazebo candidate and is not approved for real-robot execution.
