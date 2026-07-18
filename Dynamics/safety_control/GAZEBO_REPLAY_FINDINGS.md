@@ -662,3 +662,21 @@ colcon build \
   --packages-select robot_msgs \
   --cmake-clean-cache \
   --cmake-args -DSTEP_DRY_RUN_NO_DXL=ON
+
+
+  ### Build modes for hip roll scale testing
+
+Default dry-run build:
+
+```bash
+cd ~/IRC/IRC-STEP/Dynamics
+
+source /opt/ros/humble/setup.bash
+
+rm -rf build install log
+
+colcon build \
+  --base-paths safety_control \
+  --packages-select robot_msgs \
+  --cmake-clean-cache \
+  --cmake-args -DSTEP_DRY_RUN_NO_DXL=ON
