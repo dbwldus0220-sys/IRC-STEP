@@ -680,3 +680,26 @@ colcon build \
   --packages-select robot_msgs \
   --cmake-clean-cache \
   --cmake-args -DSTEP_DRY_RUN_NO_DXL=ON
+
+## Free-base Gazebo joint tracking check
+
+- Free-base no-gravity high-spawn world was used to remove ground contact effects.
+- Upper-body fixed correction worked: upper body/head no longer moves unexpectedly in no-gravity.
+- Leg cmd_pos topics are connected to Gazebo JointPositionController.
+- Zero-pose command moved actual leg joints to zero, confirming cmd_pos/controller path is alive.
+- Single joint test on right_knee_pitch_joint confirmed the knee visually bends when commanded.
+- Initial high gain setting caused severe leg vibration.
+- Reduced free-base test gain and added ramp command.
+- After ramp command, vibration was greatly reduced.
+- Current conclusion:
+  - cmd_pos topic path is working.
+  - JointPositionController is active.
+  - Remaining issue is not simply topic connection.
+  - Actual joint logger may still be unreliable for exact angle reading from /step/leg_joint_states.
+  - Next work should continue from stable ramped single-joint test, then apply ramp to full default pose.
+
+Pending next steps:
+1. Improve actual joint state logger parsing or verify with a better joint state topic.
+2. Apply ramp interpolation to publish_leg_constant_pose.py.
+3. Retest document default pose in no-gravity high-spawn world.
+4. Then retest gravity free-base static posture.
