@@ -1,0 +1,11 @@
+6:from dataclasses import asdict, dataclass
+53:class HurdleInfo:
+174:        self.publisher = self.create_publisher(String, self.output_topic, 10)
+500:    def _empty_info(self) -> HurdleInfo:
+502:        return HurdleInfo(
+543:    def _publish(self, info: HurdleInfo) -> None:
+545:        message.data = json.dumps(
+546:            asdict(info),
+581:                self._publish(self._empty_info())
+587:        self._publish(
+588:            HurdleInfo(

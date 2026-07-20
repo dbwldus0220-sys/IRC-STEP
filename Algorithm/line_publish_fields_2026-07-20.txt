@@ -1,0 +1,127 @@
+632-        self.get_logger().info(
+633-            "Temporal filter: "
+634-            f"window={self.filter_window_size}, "
+635-            f"ema_alpha={self.filter_ema_alpha:.3f}, "
+636-            "reset_after_missed_frames="
+637-            f"{self.filter_reset_missed_frames}"
+638-        )
+639-
+640-    # ========================================================
+641-    # ROS callbacks
+642-    # ========================================================
+643-
+644-    def _image_callback(
+645-        self,
+646-        message: Image,
+647-    ) -> None:
+648-        """Update actual RealSense image resolution."""
+649-
+650-        if message.width > 0 and message.height > 0:
+651-            self.image_width = int(
+652-                message.width
+653-            )
+654-
+655-            self.image_height = int(
+656-                message.height
+657-            )
+658-
+659-    def _detections_callback(
+660-        self,
+661-        message: String,
+662-    ) -> None:
+663-        """Process one YOLO detection message."""
+664-
+665-        started = time.perf_counter()
+666-
+667-        try:
+668-            payload = json.loads(
+669-                message.data
+670-            )
+671-
+672-            detections = payload.get(
+673-                "detections",
+674-                [],
+675-            )
+676-
+677-            if not isinstance(
+678-                detections,
+679-                list,
+680-            ):
+681-                raise ValueError(
+682-                    "'detections' must be a list"
+683-                )
+684-
+685-            points = (
+686-                self._extract_line_points(
+687-                    detections
+688-                )
+689-            )
+690-
+691-            points = (
+692-                self._remove_near_duplicates(
+693-                    points
+694-                )
+695-            )
+696-
+697-            result = self._analyze_line(
+698-                points
+699-            )
+700-
+701-            result["processing_ms"] = round(
+702-                (
+703-                    time.perf_counter()
+704-                    - started
+705-                )
+706-                * 1000.0,
+707-                3,
+708-            )
+709-
+710-            output = String()
+711-
+712:            output.data = json.dumps(
+713-                result,
+714-                ensure_ascii=True,
+715-                separators=(",", ":"),
+716-            )
+717-
+718:            self.publisher.publish(
+719-                output
+720-            )
+721-
+722-        except (
+723-            json.JSONDecodeError,
+724-            TypeError,
+725-            ValueError,
+726-            KeyError,
+727-        ) as exc:
+728-            self.get_logger().warning(
+729-                "Invalid detection message: "
+730-                f"{type(exc).__name__}: {exc}"
+731-            )
+732-
+733-        except Exception as exc:
+734-            self.get_logger().error(
+735-                "Line analysis failed: "
+736-                f"{type(exc).__name__}: {exc}"
+737-            )
+738-
+739-    # ========================================================
+740-    # Detection extraction
+741-    # ========================================================
+742-
+743-    def _extract_line_points(
+744-        self,
+745-        detections: list[dict[str, Any]],
+746-    ) -> list[LinePoint]:
+747-        """
+748-        Extract valid class='line' centers from YOLO detections.
+749-        """
+750-
+751-        width = self.image_width
+752-        height = self.image_height
+753-
+754-        roi_left = (
+755-            width
+756-            * self.roi_x_min_ratio
+757-        )
+758-

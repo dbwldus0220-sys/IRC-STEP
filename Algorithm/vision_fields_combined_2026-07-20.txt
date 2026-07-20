@@ -1,0 +1,428 @@
+===== BALL FIELDS =====
+22:@dataclass(frozen=True)
+23-class BallCandidate:
+24-    """One ball candidate with image geometry and optional depth."""
+25-
+26-    confidence: float
+27-    bbox: list[int]
+28-    center: list[int]
+29-    width_px: int
+30-    height_px: int
+31-    area_px: int
+32-    offset_x_px: int
+33-    offset_y_px: int
+34-    offset_x_norm: float
+35-    offset_y_norm: float
+36-    horizontal_direction: str
+37-    bearing_deg: float | None
+38-    elevation_deg: float | None
+39-    depth_m: float | None
+40-    lateral_offset_m: float | None
+41-    vertical_offset_m: float | None
+42-    horizontal_distance_m: float | None
+43-    distance_m: float | None
+44-    depth_valid: bool
+45-    score: float
+46-
+47-
+48:@dataclass(frozen=True)
+49:class BallInfo:
+50-    """Ball target information for future mission/behavior nodes."""
+51-
+52-    detected: bool
+53-    state: str
+54-    confidence: float
+55-    center_x: int | None
+56-    center_y: int | None
+57-    bbox: list[int] | None
+58-    width_px: int | None
+59-    height_px: int | None
+60-    area_px: int | None
+61-    offset_x_px: int | None
+62-    offset_y_px: int | None
+63-    offset_x_norm: float | None
+64-    offset_y_norm: float | None
+65-    horizontal_direction: str
+66-    bearing_deg: float | None
+67-    elevation_deg: float | None
+68-    depth_m: float | None
+69-    lateral_offset_m: float | None
+70-    vertical_offset_m: float | None
+71-    horizontal_distance_m: float | None
+72-    distance_m: float | None
+73-    depth_valid: bool
+74-    is_centered: bool
+75-    is_close: bool
+76-    approach_ready: bool
+77-    pickup_ready: bool
+78-    pickup_now: bool
+79-    target_priority_score: float
+80-    candidate_count: int
+81-    candidates: list[BallCandidate]
+82-    image_width: int | None
+83-    image_height: int | None
+84-    image_center_x: float | None
+85-    image_center_y: float | None
+86-    camera_info_ready: bool
+87-    depth_age_sec: float | None
+88-    note: str
+89-
+90-
+91-class BallAnalyzer(Node):
+92-    """Convert raw YOLO ball detections into stable ball target information.
+93-
+94-    This node does not decide robot motion. The mission/behavior layer should
+95-    still check the current mission phase before allowing a pickup command.
+96-    That is what prevents a far Ball B from stealing priority while the robot
+97-    is scoring at Goal A.
+98-    """
+99-
+100-    def __init__(self) -> None:
+101-        super().__init__("ball_analyzer")
+102-
+103-        self.declare_parameter("detections_topic", "/vision/detections")
+104-        self.declare_parameter(
+105-            "depth_topic",
+106-            "/camera/aligned_depth_to_color/image_raw",
+107-        )
+108-        self.declare_parameter(
+109-            "camera_info_topic",
+110-            "/camera/color/camera_info",
+111-        )
+112-        self.declare_parameter("output_topic", "/vision/ball_info")
+113-        self.declare_parameter("ball_class_name", "ball")
+114-        self.declare_parameter("min_confidence", 0.35)
+115-        self.declare_parameter("depth_timeout_sec", 0.7)
+116-        self.declare_parameter("depth_window_px", 9)
+117-        self.declare_parameter("max_valid_depth_m", 4.0)
+118-        self.declare_parameter("detect_depth_m", 2.0)
+119-        self.declare_parameter("approach_depth_m", 1.4)
+120-        self.declare_parameter("pickup_ready_depth_m", 0.9)
+121-        self.declare_parameter("pickup_now_depth_m", 0.8)
+122-        self.declare_parameter("pickup_depth_tolerance_m", 0.05)
+123-        self.declare_parameter("pickup_center_tolerance_norm", 0.08)
+124-        self.declare_parameter("horizontal_deadband_px", 20)
+125-        self.declare_parameter("center_tolerance_px", 140)
+126-        self.declare_parameter("center_y_min_ratio_for_pickup", 0.45)
+127-        self.declare_parameter("publish_empty_when_missing", True)
+128-
+129-        self.detections_topic = str(
+130-            self.get_parameter("detections_topic").value
+131-        )
+132-        self.depth_topic = str(self.get_parameter("depth_topic").value)
+133-        self.camera_info_topic = str(
+134-            self.get_parameter("camera_info_topic").value
+135-        )
+136-        self.output_topic = str(self.get_parameter("output_topic").value)
+137-        self.ball_class_name = str(
+138-            self.get_parameter("ball_class_name").value
+139-        )
+140-        self.min_confidence = float(
+141-            self.get_parameter("min_confidence").value
+142-        )
+143-        self.depth_timeout_sec = float(
+144-            self.get_parameter("depth_timeout_sec").value
+145-        )
+146-        self.depth_window_px = max(
+147-            3,
+148-            int(self.get_parameter("depth_window_px").value),
+149-        )
+
+===== LINE FIELDS =====
+65:@dataclass(frozen=True)
+66-class LinePoint:
+67-    """
+68-    One YOLO line detection center.
+69-
+70-    Attributes
+71-    ----------
+72-    x:
+73-        Image x coordinate in pixels.
+74-
+75-    y:
+76-        Image y coordinate in pixels.
+77-
+78-    confidence:
+79-        YOLO confidence score.
+80-    """
+81-
+82-    x: float
+83-    y: float
+84-    confidence: float
+85-
+86-
+87:@dataclass(frozen=True)
+88-class FittedLine:
+89-    """
+90-    Image-space fitted path.
+91-
+92-    Model
+93-    -----
+94-        x = slope * y + intercept
+95-
+96-    Image coordinate convention
+97-    ---------------------------
+98-        +x -> image right
+99-        +y -> image down
+100-
+101-    angle_deg convention
+102-    --------------------
+103-        Negative -> path goes toward image left as it gets farther
+104-        Zero     -> straight ahead
+105-        Positive -> path goes toward image right as it gets farther
+106-    """
+107-
+108-    slope: float
+109-    intercept: float
+110-    angle_deg: float
+111-    rmse_px: float
+112-    point_count: int
+113-    y_span_px: float
+114-
+115-
+116-# ============================================================
+117-# Main ROS 2 node
+118-# ============================================================
+119-
+120-
+121-class YoloLineAnalyzer(Node):
+122-    """
+123-    Analyze YOLO26 line detections and publish navigation geometry.
+124-
+125-    This node does not run YOLO inference again.
+126-
+127-    Processing chain
+128-    ----------------
+129-    /vision/detections
+130-        ->
+131-    Extract class "line"
+132-        ->
+133-    Get bbox centers
+134-        ->
+135-    Remove duplicates
+136-        ->
+137-    Sort near to far
+138-        ->
+139-    Calculate reliable segment angles
+140-        ->
+141-    Estimate immediate heading
+142-        ->
+143-    Calculate lateral offset
+144-        ->
+145-    Analyze turn geometry
+146-        ->
+147-    Median + EMA temporal filtering
+148-        ->
+149-    /vision/line_info
+150-    """
+151-
+152-    def __init__(self) -> None:
+153-        super().__init__("yolo_line_analyzer")
+154-
+155-        # ====================================================
+156-        # ROS topic parameters
+157-        # ====================================================
+158-
+159-        self.declare_parameter(
+160-            "detections_topic",
+161-            "/vision/detections",
+162-        )
+163-
+164-        self.declare_parameter(
+165-            "image_topic",
+166-            "/camera/camera/color/image_raw",
+167-        )
+168-
+169-        self.declare_parameter(
+170-            "output_topic",
+171-            "/vision/line_info",
+172-        )
+173-
+174-        # ====================================================
+175-        # Detection filtering
+176-        # ====================================================
+177-
+178-        self.declare_parameter(
+179-            "line_class_name",
+180-            "line",
+181-        )
+182-
+183-        self.declare_parameter(
+184-            "min_confidence",
+185-            0.40,
+186-        )
+187-
+188-        self.declare_parameter(
+189-            "min_bbox_width_px",
+190-            3,
+191-        )
+192-
+193-        self.declare_parameter(
+194-            "min_bbox_height_px",
+195-            3,
+196-        )
+197-
+198-        # ====================================================
+199-        # Region of interest
+200-        # ====================================================
+201-
+202-        self.declare_parameter(
+203-            "roi_x_min_ratio",
+204-            0.05,
+205-        )
+206-
+207-        self.declare_parameter(
+208-            "roi_x_max_ratio",
+209-            0.95,
+210-        )
+211-
+212-        self.declare_parameter(
+213-            "roi_y_min_ratio",
+214-            0.05,
+215-        )
+216-
+217-        self.declare_parameter(
+218-            "roi_y_max_ratio",
+219-            0.97,
+220-        )
+221-
+222-        # ====================================================
+223-        # Point filtering
+224-        # ====================================================
+225-
+226-        self.declare_parameter(
+227-            "min_point_distance_px",
+
+===== HURDLE FIELDS =====
+22:@dataclass(frozen=True)
+23-class HurdleCandidate:
+24-    """One hurdle candidate with image and depth geometry."""
+25-
+26-    confidence: float
+27-    bbox: list[int]
+28-    center: list[int]
+29-    width_px: int
+30-    height_px: int
+31-    area_px: int
+32-    offset_x_px: int
+33-    offset_y_px: int
+34-    offset_x_norm: float
+35-    offset_y_norm: float
+36-    horizontal_direction: str
+37-    bearing_deg: float | None
+38-    elevation_deg: float | None
+39-    depth_m: float | None
+40-    horizontal_distance_m: float | None
+41-    distance_m: float | None
+42-    lateral_offset_m: float | None
+43-    estimated_width_m: float | None
+44-    left_depth_m: float | None
+45-    right_depth_m: float | None
+46-    hurdle_angle_deg: float | None
+47-    depth_valid: bool
+48-    depth_sample_count: int
+49-    score: float
+50-
+51-
+52:@dataclass(frozen=True)
+53:class HurdleInfo:
+54-    """Selected hurdle geometry and provisional jump conditions."""
+55-
+56-    detected: bool
+57-    state: str
+58-    confidence: float
+59-    center_x: int | None
+60-    center_y: int | None
+61-    bbox: list[int] | None
+62-    width_px: int | None
+63-    height_px: int | None
+64-    area_px: int | None
+65-    offset_x_px: int | None
+66-    offset_y_px: int | None
+67-    offset_x_norm: float | None
+68-    offset_y_norm: float | None
+69-    horizontal_direction: str
+70-    bearing_deg: float | None
+71-    elevation_deg: float | None
+72-    depth_m: float | None
+73-    horizontal_distance_m: float | None
+74-    distance_m: float | None
+75-    lateral_offset_m: float | None
+76-    estimated_width_m: float | None
+77-    left_depth_m: float | None
+78-    right_depth_m: float | None
+79-    hurdle_angle_deg: float | None
+80-    depth_valid: bool
+81-    depth_sample_count: int
+82-    is_centered: bool
+83-    depth_in_go_range: bool
+84-    go_depth_error_m: float | None
+85-    go_now: bool
+86-    target_priority_score: float
+87-    candidate_count: int
+88-    candidates: list[HurdleCandidate]
+89-    image_width: int | None
+90-    image_height: int | None
+91-    camera_info_ready: bool
+92-    depth_age_sec: float | None
+93-    note: str
+94-
+95-
+96-class HurdleAnalyzer(Node):
+97-    """Convert raw hurdle detections into an SDK jump-ready signal."""
+98-
+99-    def __init__(self) -> None:
+100-        super().__init__("hurdle_analyzer")
+101-
+102-        self.declare_parameter("detections_topic", "/vision/detections")
+103-        self.declare_parameter(
+104-            "depth_topic",
+105-            "/camera/aligned_depth_to_color/image_raw",
+106-        )
+107-        self.declare_parameter(
+108-            "camera_info_topic",
+109-            "/camera/color/camera_info",
+110-        )
+111-        self.declare_parameter("output_topic", "/vision/hurdle_info")
+112-        self.declare_parameter("hurdle_class_name", "hurdle")
+113-        self.declare_parameter("min_confidence", 0.35)
+114-        self.declare_parameter("depth_timeout_sec", 0.7)
+115-        self.declare_parameter("depth_window_px", 9)
+116-        self.declare_parameter("max_valid_depth_m", 4.0)
+117-        self.declare_parameter("go_target_depth_m", 0.80)
+118-        self.declare_parameter("go_depth_tolerance_m", 0.10)
+119-        self.declare_parameter("go_center_tolerance_norm", 0.12)
+120-        self.declare_parameter("direction_deadband_norm", 0.04)
+121-        self.declare_parameter("publish_empty_when_missing", True)
+122-
+123-        self.detections_topic = self._string_parameter("detections_topic")
+124-        self.depth_topic = self._string_parameter("depth_topic")
+125-        self.camera_info_topic = self._string_parameter(
+126-            "camera_info_topic"
+127-        )
+128-        self.output_topic = self._string_parameter("output_topic")
+129-        self.hurdle_class_name = self._string_parameter(
+130-            "hurdle_class_name"
+131-        )
+132-        self.min_confidence = self._float_parameter("min_confidence")
+133-        self.depth_timeout_sec = self._float_parameter(
+134-            "depth_timeout_sec"
+135-        )
+136-        self.depth_window_px = max(
+137-            3,
+138-            int(self.get_parameter("depth_window_px").value),
+139-        )
+140-        if self.depth_window_px % 2 == 0:
+141-            self.depth_window_px += 1
+142-        self.max_valid_depth_m = self._float_parameter(
+143-            "max_valid_depth_m"
+144-        )
+145-        self.go_target_depth_m = self._float_parameter(
+146-            "go_target_depth_m"
+147-        )
+148-        self.go_depth_tolerance_m = max(
+149-            0.0,
+150-            self._float_parameter("go_depth_tolerance_m"),
+151-        )
+152-        self.go_center_tolerance_norm = max(
+153-            0.0,

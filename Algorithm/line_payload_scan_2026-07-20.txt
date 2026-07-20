@@ -1,0 +1,469 @@
+648-        """Update actual RealSense image resolution."""
+649-
+650-        if message.width > 0 and message.height > 0:
+651-            self.image_width = int(
+652-                message.width
+653-            )
+654-
+655-            self.image_height = int(
+656-                message.height
+657-            )
+658-
+659-    def _detections_callback(
+660-        self,
+661-        message: String,
+662-    ) -> None:
+663-        """Process one YOLO detection message."""
+664-
+665-        started = time.perf_counter()
+666-
+667-        try:
+668:            payload = json.loads(
+669-                message.data
+670-            )
+671-
+672-            detections = payload.get(
+673-                "detections",
+674-                [],
+675-            )
+676-
+677-            if not isinstance(
+678-                detections,
+679-                list,
+680-            ):
+681-                raise ValueError(
+682-                    "'detections' must be a list"
+683-                )
+684-
+685-            points = (
+686-                self._extract_line_points(
+687-                    detections
+688-                )
+689-            )
+690-
+691-            points = (
+692-                self._remove_near_duplicates(
+693-                    points
+694-                )
+695-            )
+696-
+697:            result = self._analyze_line(
+698-                points
+699-            )
+700-
+701-            result["processing_ms"] = round(
+702-                (
+703-                    time.perf_counter()
+704-                    - started
+705-                )
+706-                * 1000.0,
+707-                3,
+708-            )
+709-
+710-            output = String()
+711-
+712:            output.data = json.dumps(
+713-                result,
+714-                ensure_ascii=True,
+715-                separators=(",", ":"),
+716-            )
+717-
+718-            self.publisher.publish(
+719-                output
+720-            )
+721-
+722-        except (
+723-            json.JSONDecodeError,
+724-            TypeError,
+725-            ValueError,
+726-            KeyError,
+727-        ) as exc:
+728-            self.get_logger().warning(
+729-                "Invalid detection message: "
+730-                f"{type(exc).__name__}: {exc}"
+731-            )
+732-
+733-        except Exception as exc:
+734-            self.get_logger().error(
+735-                "Line analysis failed: "
+736-                f"{type(exc).__name__}: {exc}"
+737-            )
+738-
+739-    # ========================================================
+740-    # Detection extraction
+741-    # ========================================================
+742-
+743-    def _extract_line_points(
+744-        self,
+745-        detections: list[dict[str, Any]],
+746-    ) -> list[LinePoint]:
+747-        """
+748-        Extract valid class='line' centers from YOLO detections.
+749-        """
+750-
+751-        width = self.image_width
+752-        height = self.image_height
+753-
+754-        roi_left = (
+755-            width
+756-            * self.roi_x_min_ratio
+757-        )
+758-
+759-        roi_right = (
+760-            width
+761-            * self.roi_x_max_ratio
+762-        )
+763-
+764-        roi_top = (
+765-            height
+766-            * self.roi_y_min_ratio
+767-        )
+768-
+769-        roi_bottom = (
+770-            height
+771-            * self.roi_y_max_ratio
+772-        )
+773-
+774-        points: list[LinePoint] = []
+775-
+776-        for detection in detections:
+777-            if (
+778-                detection.get("class_name")
+779-                != self.line_class_name
+780-            ):
+781-                continue
+782-
+783-            confidence = float(
+784-                detection.get(
+785-                    "confidence",
+786-                    0.0,
+787-                )
+788-            )
+789-
+790-            if (
+791-                confidence
+792-                < self.min_confidence
+793-            ):
+794-                continue
+795-
+796-            bbox = detection.get(
+797-                "bbox"
+798-            )
+799-
+800-            center = detection.get(
+801-                "center"
+802-            )
+803-
+804-            if (
+805-                not isinstance(bbox, list)
+806-                or len(bbox) != 4
+807-            ):
+808-                continue
+809-
+810-            if (
+811-                not isinstance(center, list)
+812-                or len(center) != 2
+813-            ):
+814-                continue
+815-
+816-            left, top, right, bottom = (
+817-                float(value)
+818-                for value in bbox
+819-            )
+820-
+821-            center_x, center_y = (
+822-                float(value)
+823-                for value in center
+824-            )
+825-
+826-            bbox_width = (
+827-                right - left
+828-            )
+829-
+830-            bbox_height = (
+831-                bottom - top
+832-            )
+--
+2095-        far_fit = self._robust_fit(
+2096-            far_points,
+2097-            require_y_span=True,
+2098-        )
+2099-
+2100-        # ----------------------------------------------------
+2101-        # Reliable segment geometry
+2102-        # ----------------------------------------------------
+2103-
+2104-        (
+2105-            segment_angles,
+2106-            segment_vertical_spans,
+2107-        ) = self._calculate_segment_angles(
+2108-            points
+2109-        )
+2110-
+2111-        # ----------------------------------------------------
+2112-        # Immediate heading
+2113-        # ----------------------------------------------------
+2114-
+2115:        heading_result = (
+2116-            self._calculate_immediate_heading(
+2117-                segment_angles,
+2118-                segment_vertical_spans,
+2119-            )
+2120-        )
+2121-
+2122-        immediate_heading = (
+2123-            heading_result[
+2124-                "heading_deg"
+2125-            ]
+2126-        )
+2127-
+2128-        near_fit_heading = (
+2129-            near_fit.angle_deg
+2130-            if near_fit is not None
+2131-            else None
+2132-        )
+2133-
+2134-        # Current heading priority:
+2135-        #
+2136-        # 1. Nearest reliable segments
+2137-        # 2. Near-region fit
+2138-        # 3. Full fit
+2139-        if (
+2140-            immediate_heading
+2141-            is not None
+2142-        ):
+2143-            heading_error = float(
+2144-                immediate_heading
+2145-            )
+2146-
+2147-        elif (
+2148-            near_fit
+2149-            is not None
+2150-        ):
+2151-            heading_error = float(
+2152-                near_fit.angle_deg
+2153-            )
+2154-
+2155-        else:
+2156-            heading_error = float(
+2157-                full_fit.angle_deg
+2158-            )
+2159-
+2160-        # For compatibility:
+2161-        #
+2162-        # near_heading_deg represents current/local heading.
+2163-        near_heading = (
+2164-            heading_error
+2165-        )
+2166-
+2167-        # ----------------------------------------------------
+2168-        # Far heading
+2169-        # ----------------------------------------------------
+2170-
+2171-        # Only publish when far geometry has enough y-span.
+2172-        far_heading = (
+2173-            float(
+2174-                far_fit.angle_deg
+2175-            )
+2176-            if (
+2177-                far_fit
+2178-                is not None
+2179-            )
+2180-            else None
+2181-        )
+2182-
+2183-        turn_angle = (
+2184-            far_heading
+2185-            - near_heading
+2186-            if (
+2187-                far_heading
+2188-                is not None
+2189-            )
+2190-            else None
+2191-        )
+2192-
+2193-        # ----------------------------------------------------
+2194-        # Lateral offset
+2195-        # ----------------------------------------------------
+2196-
+2197-        eval_y = (
+2198-            self.image_height
+2199-            * self.offset_eval_y_ratio
+2200-        )
+2201-
+2202-        offset_fit = (
+2203-            near_fit
+2204-            if (
+2205-                near_fit
+2206-                is not None
+2207-            )
+2208-            else full_fit
+2209-        )
+2210-
+2211-        predicted_line_x = (
+2212-            offset_fit.slope
+2213-            * eval_y
+2214-            + offset_fit.intercept
+2215-        )
+2216-
+2217-        image_center_x = (
+2218-            self.image_width / 2.0
+2219-        )
+2220-
+2221-        lateral_offset_px = (
+2222-            predicted_line_x
+2223-            - image_center_x
+2224-        )
+2225-
+2226-        lateral_offset_norm = (
+2227-            lateral_offset_px
+2228-            / image_center_x
+2229-            if (
+2230-                image_center_x > 0
+2231-            )
+2232-            else 0.0
+2233-        )
+2234-
+2235-        # ----------------------------------------------------
+--
+2257-
+2258-        detection_quality = (
+2259-            self._calculate_detection_quality(
+2260-                points
+2261-            )
+2262-        )
+2263-
+2264-        geometry_quality = (
+2265-            self._calculate_geometry_quality(
+2266-                full_fit,
+2267-                len(
+2268-                    segment_angles
+2269-                ),
+2270-            )
+2271-        )
+2272-
+2273-        # ----------------------------------------------------
+2274-        # Temporal filtering
+2275-        # ----------------------------------------------------
+2276-
+2277:        filter_result = (
+2278-            self._update_temporal_filter(
+2279-                heading_error,
+2280-                lateral_offset_norm,
+2281-            )
+2282-        )
+2283-
+2284-        # ----------------------------------------------------
+2285-        # Return JSON-compatible result
+2286-        # ----------------------------------------------------
+2287-
+2288-        return {
+2289-            "detected":
+2290-                True,
+2291-
+2292-            "line_count":
+2293-                len(points),
+2294-
+2295-            "center_points_px":
+2296-                [
+2297-                    [
+2298-                        int(
+2299-                            round(
+2300-                                point.x
+2301-                            )
+2302-                        ),
+2303-                        int(
+2304-                            round(
+2305-                                point.y
+2306-                            )
+2307-                        ),
+2308-                    ]
+2309-                    for point in points
+2310-                ],
+2311-
+2312-            "segment_angles_deg":
+2313-                segment_angles,
+2314-
+2315-            "segment_vertical_spans_px":
+2316-                [
+2317-                    round(
+2318-                        value,
+2319-                        3,
+2320-                    )
+2321-                    for value
+2322-                    in segment_vertical_spans
+2323-                ],
+2324-
+2325-            "usable_segment_count":
+2326-                len(
+2327-                    segment_angles
+2328-                ),
+2329-
+2330-            "lateral_offset_px":
+2331-                round(
+2332-                    lateral_offset_px,
+2333-                    3,
+2334-                ),
+2335-
+2336-            "lateral_offset_norm":
+2337-                round(
+2338-                    lateral_offset_norm,
+2339-                    6,
+2340-                ),
+2341-
+2342-            "heading_error_deg":
+2343-                round(
+2344-                    heading_error,
+2345-                    3,
+2346-                ),
+2347-
+2348-            "near_heading_deg":
+2349-                round(
+2350-                    near_heading,
+2351-                    3,
+2352-                ),
+2353-
+2354-            "near_fit_heading_deg":
+2355-                (
+2356-                    round(
+2357-                        near_fit_heading,
+2358-                        3,
+2359-                    )
+2360-                    if (
+2361-                        near_fit_heading
+2362-                        is not None
+2363-                    )
+2364-                    else None
+2365-                ),
+2366-
+2367-            "heading_segment_count_used":
+2368-                int(
+2369-                    heading_result[
+2370-                        "segment_count_used"
+2371-                    ]
+2372-                ),
+2373-
+2374-            "heading_stability_deg":
+2375-                (
+2376-                    round(
+2377-                        float(
+2378-                            heading_result[
+2379-                                "stability_deg"
+2380-                            ]
+2381-                        ),
+2382-                        3,
+2383-                    )
+2384-                    if (
+2385-                        heading_result[
+2386-                            "stability_deg"
+2387-                        ]
+2388-                        is not None
+2389-                    )
+2390-                    else None
+2391-                ),
+2392-
+2393-            "heading_quality":
+2394-                round(
+2395-                    float(
+2396-                        heading_result[
+2397-                            "quality"

@@ -1,0 +1,401 @@
+
+            "near_heading_deg":
+                None,
+
+            "near_fit_heading_deg":
+                None,
+
+            "heading_segment_count_used":
+                0,
+
+            "heading_stability_deg":
+                None,
+
+            "heading_quality":
+                0.0,
+
+            "far_heading_deg":
+                None,
+
+            "turn_angle_deg":
+                None,
+
+            "angle_change_mean_deg":
+                None,
+
+            "angle_change_max_deg":
+                None,
+
+            "turn_consistency":
+                None,
+
+            "median_heading_error_deg":
+                None,
+
+            "median_lateral_offset_norm":
+                None,
+
+            "filtered_heading_error_deg":
+                (
+                    round(
+                        self.filtered_heading,
+                        3,
+                    )
+                    if (
+                        self.filtered_heading
+                        is not None
+                    )
+                    else None
+                ),
+
+            "filtered_lateral_offset_norm":
+                (
+                    round(
+                        self.filtered_offset,
+                        6,
+                    )
+                    if (
+                        self.filtered_offset
+                        is not None
+                    )
+                    else None
+                ),
+
+            "filter_ready":
+                False,
+
+            "filter_history_size":
+                len(
+                    self.heading_history
+                ),
+
+            "missed_line_frames":
+                self.missed_line_frames,
+
+            "mean_confidence":
+                0.0,
+
+            "fit_rmse_px":
+                None,
+
+            "detection_quality":
+                0.0,
+
+            "geometry_quality":
+                0.0,
+
+            "image_width":
+                self.image_width,
+
+            "image_height":
+                self.image_height,
+        }
+
+    # ========================================================
+    # Main line analysis
+    # ========================================================
+
+    def _analyze_line(
+        self,
+        points: list[LinePoint],
+    ) -> dict[str, Any]:
+        """Calculate all line-navigation information."""
+
+        # ----------------------------------------------------
+        # Minimum detection validity
+        # ----------------------------------------------------
+
+        if (
+            len(points)
+            < self.min_points_for_fit
+        ):
+            self._register_invalid_line_frame()
+
+            return self._empty_result()
+
+        # ----------------------------------------------------
+        # Full path fit
+        # ----------------------------------------------------
+
+        full_fit = self._robust_fit(
+            points,
+            require_y_span=False,
+        )
+
+        if full_fit is None:
+            self._register_invalid_line_frame()
+
+            return self._empty_result()
+
+        # ----------------------------------------------------
+        # Near / far points
+        # ----------------------------------------------------
+
+        (
+            near_points,
+            far_points,
+        ) = self._split_near_far(
+            points
+        )
+
+        near_fit = self._robust_fit(
+            near_points,
+            require_y_span=True,
+        )
+
+        far_fit = self._robust_fit(
+            far_points,
+            require_y_span=True,
+        )
+
+        # ----------------------------------------------------
+        # Reliable segment geometry
+        # ----------------------------------------------------
+
+        (
+            segment_angles,
+            segment_vertical_spans,
+        ) = self._calculate_segment_angles(
+            points
+        )
+
+        # ----------------------------------------------------
+        # Immediate heading
+        # ----------------------------------------------------
+
+        heading_result = (
+            self._calculate_immediate_heading(
+                segment_angles,
+                segment_vertical_spans,
+            )
+        )
+
+        immediate_heading = (
+            heading_result[
+                "heading_deg"
+            ]
+        )
+
+        near_fit_heading = (
+            near_fit.angle_deg
+            if near_fit is not None
+            else None
+        )
+
+        # Current heading priority:
+        #
+        # 1. Nearest reliable segments
+        # 2. Near-region fit
+        # 3. Full fit
+        if (
+            immediate_heading
+            is not None
+        ):
+            heading_error = float(
+                immediate_heading
+            )
+
+        elif (
+            near_fit
+            is not None
+        ):
+            heading_error = float(
+                near_fit.angle_deg
+            )
+
+        else:
+            heading_error = float(
+                full_fit.angle_deg
+            )
+
+        # For compatibility:
+        #
+        # near_heading_deg represents current/local heading.
+        near_heading = (
+            heading_error
+        )
+
+        # ----------------------------------------------------
+        # Far heading
+        # ----------------------------------------------------
+
+        # Only publish when far geometry has enough y-span.
+        far_heading = (
+            float(
+                far_fit.angle_deg
+            )
+            if (
+                far_fit
+                is not None
+            )
+            else None
+        )
+
+        turn_angle = (
+            far_heading
+            - near_heading
+            if (
+                far_heading
+                is not None
+            )
+            else None
+        )
+
+        # ----------------------------------------------------
+        # Lateral offset
+        # ----------------------------------------------------
+
+        eval_y = (
+            self.image_height
+            * self.offset_eval_y_ratio
+        )
+
+        offset_fit = (
+            near_fit
+            if (
+                near_fit
+                is not None
+            )
+            else full_fit
+        )
+
+        predicted_line_x = (
+            offset_fit.slope
+            * eval_y
+            + offset_fit.intercept
+        )
+
+        image_center_x = (
+            self.image_width / 2.0
+        )
+
+        lateral_offset_px = (
+            predicted_line_x
+            - image_center_x
+        )
+
+        lateral_offset_norm = (
+            lateral_offset_px
+            / image_center_x
+            if (
+                image_center_x > 0
+            )
+            else 0.0
+        )
+
+        # ----------------------------------------------------
+        # Turn statistics
+        # ----------------------------------------------------
+
+        angle_stats = (
+            self._calculate_angle_change_statistics(
+                segment_angles
+            )
+        )
+
+        # ----------------------------------------------------
+        # Confidence / quality
+        # ----------------------------------------------------
+
+        mean_confidence = float(
+            np.mean(
+                [
+                    point.confidence
+                    for point in points
+                ]
+            )
+        )
+
+        detection_quality = (
+            self._calculate_detection_quality(
+                points
+            )
+        )
+
+        geometry_quality = (
+            self._calculate_geometry_quality(
+                full_fit,
+                len(
+                    segment_angles
+                ),
+            )
+        )
+
+        # ----------------------------------------------------
+        # Temporal filtering
+        # ----------------------------------------------------
+
+        filter_result = (
+            self._update_temporal_filter(
+                heading_error,
+                lateral_offset_norm,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Return JSON-compatible result
+        # ----------------------------------------------------
+
+        return {
+            "detected":
+                True,
+
+            "line_count":
+                len(points),
+
+            "center_points_px":
+                [
+                    [
+                        int(
+                            round(
+                                point.x
+                            )
+                        ),
+                        int(
+                            round(
+                                point.y
+                            )
+                        ),
+                    ]
+                    for point in points
+                ],
+
+            "segment_angles_deg":
+                segment_angles,
+
+            "segment_vertical_spans_px":
+                [
+                    round(
+                        value,
+                        3,
+                    )
+                    for value
+                    in segment_vertical_spans
+                ],
+
+            "usable_segment_count":
+                len(
+                    segment_angles
+                ),
+
+            "lateral_offset_px":
+                round(
+                    lateral_offset_px,
+                    3,
+                ),
+
+            "lateral_offset_norm":
+                round(
+                    lateral_offset_norm,
+                    6,
+                ),
+
+            "heading_error_deg":
+                round(
+                    heading_error,
+                    3,
+                ),
+
+            "near_heading_deg":
+                round(
+                    near_heading,

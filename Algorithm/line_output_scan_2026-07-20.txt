@@ -1,0 +1,6 @@
+123:    Analyze YOLO26 line detections and publish navigation geometry.
+589:        # ROS publisher / subscribers
+592:        self.publisher = self.create_publisher(
+712:            output.data = json.dumps(
+718:            self.publisher.publish(
+2171:        # Only publish when far geometry has enough y-span.

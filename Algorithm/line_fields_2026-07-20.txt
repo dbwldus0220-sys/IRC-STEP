@@ -1,0 +1,163 @@
+65:@dataclass(frozen=True)
+66-class LinePoint:
+67-    """
+68-    One YOLO line detection center.
+69-
+70-    Attributes
+71-    ----------
+72-    x:
+73-        Image x coordinate in pixels.
+74-
+75-    y:
+76-        Image y coordinate in pixels.
+77-
+78-    confidence:
+79-        YOLO confidence score.
+80-    """
+81-
+82-    x: float
+83-    y: float
+84-    confidence: float
+85-
+86-
+87:@dataclass(frozen=True)
+88-class FittedLine:
+89-    """
+90-    Image-space fitted path.
+91-
+92-    Model
+93-    -----
+94-        x = slope * y + intercept
+95-
+96-    Image coordinate convention
+97-    ---------------------------
+98-        +x -> image right
+99-        +y -> image down
+100-
+101-    angle_deg convention
+102-    --------------------
+103-        Negative -> path goes toward image left as it gets farther
+104-        Zero     -> straight ahead
+105-        Positive -> path goes toward image right as it gets farther
+106-    """
+107-
+108-    slope: float
+109-    intercept: float
+110-    angle_deg: float
+111-    rmse_px: float
+112-    point_count: int
+113-    y_span_px: float
+114-
+115-
+116-# ============================================================
+117-# Main ROS 2 node
+118-# ============================================================
+119-
+120-
+121-class YoloLineAnalyzer(Node):
+122-    """
+123-    Analyze YOLO26 line detections and publish navigation geometry.
+124-
+125-    This node does not run YOLO inference again.
+126-
+127-    Processing chain
+128-    ----------------
+129-    /vision/detections
+130-        ->
+131-    Extract class "line"
+132-        ->
+133-    Get bbox centers
+134-        ->
+135-    Remove duplicates
+136-        ->
+137-    Sort near to far
+138-        ->
+139-    Calculate reliable segment angles
+140-        ->
+141-    Estimate immediate heading
+142-        ->
+143-    Calculate lateral offset
+144-        ->
+145-    Analyze turn geometry
+146-        ->
+147-    Median + EMA temporal filtering
+148-        ->
+149-    /vision/line_info
+150-    """
+151-
+152-    def __init__(self) -> None:
+153-        super().__init__("yolo_line_analyzer")
+154-
+155-        # ====================================================
+156-        # ROS topic parameters
+157-        # ====================================================
+158-
+159-        self.declare_parameter(
+160-            "detections_topic",
+161-            "/vision/detections",
+162-        )
+163-
+164-        self.declare_parameter(
+165-            "image_topic",
+166-            "/camera/camera/color/image_raw",
+167-        )
+168-
+169-        self.declare_parameter(
+170-            "output_topic",
+171-            "/vision/line_info",
+172-        )
+173-
+174-        # ====================================================
+175-        # Detection filtering
+176-        # ====================================================
+177-
+178-        self.declare_parameter(
+179-            "line_class_name",
+180-            "line",
+181-        )
+182-
+183-        self.declare_parameter(
+184-            "min_confidence",
+185-            0.40,
+186-        )
+187-
+188-        self.declare_parameter(
+189-            "min_bbox_width_px",
+190-            3,
+191-        )
+192-
+193-        self.declare_parameter(
+194-            "min_bbox_height_px",
+195-            3,
+196-        )
+197-
+198-        # ====================================================
+199-        # Region of interest
+200-        # ====================================================
+201-
+202-        self.declare_parameter(
+203-            "roi_x_min_ratio",
+204-            0.05,
+205-        )
+206-
+207-        self.declare_parameter(
+208-            "roi_x_max_ratio",
+209-            0.95,
+210-        )
+211-
+212-        self.declare_parameter(
+213-            "roi_y_min_ratio",
+214-            0.05,
+215-        )
+216-
+217-        self.declare_parameter(
+218-            "roi_y_max_ratio",
+219-            0.97,
+220-        )
+221-
+222-        # ====================================================
+223-        # Point filtering
+224-        # ====================================================
+225-
+226-        self.declare_parameter(
+227-            "min_point_distance_px",

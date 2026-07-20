@@ -1,0 +1,128 @@
+22:@dataclass(frozen=True)
+23-class BallCandidate:
+24-    """One ball candidate with image geometry and optional depth."""
+25-
+26-    confidence: float
+27-    bbox: list[int]
+28-    center: list[int]
+29-    width_px: int
+30-    height_px: int
+31-    area_px: int
+32-    offset_x_px: int
+33-    offset_y_px: int
+34-    offset_x_norm: float
+35-    offset_y_norm: float
+36-    horizontal_direction: str
+37-    bearing_deg: float | None
+38-    elevation_deg: float | None
+39-    depth_m: float | None
+40-    lateral_offset_m: float | None
+41-    vertical_offset_m: float | None
+42-    horizontal_distance_m: float | None
+43-    distance_m: float | None
+44-    depth_valid: bool
+45-    score: float
+46-
+47-
+48:@dataclass(frozen=True)
+49:class BallInfo:
+50-    """Ball target information for future mission/behavior nodes."""
+51-
+52-    detected: bool
+53-    state: str
+54-    confidence: float
+55-    center_x: int | None
+56-    center_y: int | None
+57-    bbox: list[int] | None
+58-    width_px: int | None
+59-    height_px: int | None
+60-    area_px: int | None
+61-    offset_x_px: int | None
+62-    offset_y_px: int | None
+63-    offset_x_norm: float | None
+64-    offset_y_norm: float | None
+65-    horizontal_direction: str
+66-    bearing_deg: float | None
+67-    elevation_deg: float | None
+68-    depth_m: float | None
+69-    lateral_offset_m: float | None
+70-    vertical_offset_m: float | None
+71-    horizontal_distance_m: float | None
+72-    distance_m: float | None
+73-    depth_valid: bool
+74-    is_centered: bool
+75-    is_close: bool
+76-    approach_ready: bool
+77-    pickup_ready: bool
+78-    pickup_now: bool
+79-    target_priority_score: float
+80-    candidate_count: int
+81-    candidates: list[BallCandidate]
+82-    image_width: int | None
+83-    image_height: int | None
+84-    image_center_x: float | None
+85-    image_center_y: float | None
+86-    camera_info_ready: bool
+87-    depth_age_sec: float | None
+88-    note: str
+89-
+90-
+91-class BallAnalyzer(Node):
+92-    """Convert raw YOLO ball detections into stable ball target information.
+93-
+94-    This node does not decide robot motion. The mission/behavior layer should
+95-    still check the current mission phase before allowing a pickup command.
+96-    That is what prevents a far Ball B from stealing priority while the robot
+97-    is scoring at Goal A.
+98-    """
+99-
+100-    def __init__(self) -> None:
+101-        super().__init__("ball_analyzer")
+102-
+103-        self.declare_parameter("detections_topic", "/vision/detections")
+104-        self.declare_parameter(
+105-            "depth_topic",
+106-            "/camera/aligned_depth_to_color/image_raw",
+107-        )
+108-        self.declare_parameter(
+109-            "camera_info_topic",
+110-            "/camera/color/camera_info",
+111-        )
+112-        self.declare_parameter("output_topic", "/vision/ball_info")
+113-        self.declare_parameter("ball_class_name", "ball")
+114-        self.declare_parameter("min_confidence", 0.35)
+115-        self.declare_parameter("depth_timeout_sec", 0.7)
+116-        self.declare_parameter("depth_window_px", 9)
+117-        self.declare_parameter("max_valid_depth_m", 4.0)
+118-        self.declare_parameter("detect_depth_m", 2.0)
+119-        self.declare_parameter("approach_depth_m", 1.4)
+120-        self.declare_parameter("pickup_ready_depth_m", 0.9)
+121-        self.declare_parameter("pickup_now_depth_m", 0.8)
+122-        self.declare_parameter("pickup_depth_tolerance_m", 0.05)
+123-        self.declare_parameter("pickup_center_tolerance_norm", 0.08)
+124-        self.declare_parameter("horizontal_deadband_px", 20)
+125-        self.declare_parameter("center_tolerance_px", 140)
+126-        self.declare_parameter("center_y_min_ratio_for_pickup", 0.45)
+127-        self.declare_parameter("publish_empty_when_missing", True)
+128-
+129-        self.detections_topic = str(
+130-            self.get_parameter("detections_topic").value
+131-        )
+132-        self.depth_topic = str(self.get_parameter("depth_topic").value)
+133-        self.camera_info_topic = str(
+134-            self.get_parameter("camera_info_topic").value
+135-        )
+136-        self.output_topic = str(self.get_parameter("output_topic").value)
+137-        self.ball_class_name = str(
+138-            self.get_parameter("ball_class_name").value
+139-        )
+140-        self.min_confidence = float(
+141-            self.get_parameter("min_confidence").value
+142-        )
+143-        self.depth_timeout_sec = float(
+144-            self.get_parameter("depth_timeout_sec").value
+145-        )
+146-        self.depth_window_px = max(
+147-            3,
+148-            int(self.get_parameter("depth_window_px").value),
+149-        )

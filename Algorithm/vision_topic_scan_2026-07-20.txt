@@ -1,0 +1,191 @@
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:6:    /vision/detections  (std_msgs/String, JSON)
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:9:    /vision/line_info   (std_msgs/String, JSON)
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:69:            "/vision/detections",
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:79:            "/vision/line_info",
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:287:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:293:        self.detection_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:300:        self.image_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v2.py:370:            self.publisher.publish(output)
+IRC_vision/src/step/step/line_navigation_planner.py:112:    """Create smooth line-following setpoints from ``/vision/line_info``."""
+IRC_vision/src/step/step/line_debug_monitor.py:3:Compact terminal monitor for /vision/line_info.
+IRC_vision/src/step/step/line_debug_monitor.py:29:            "/vision/line_info",
+IRC_vision/src/step/step/line_debug_monitor.py:54:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/ball_navigation_controller.py:24:        self.declare_parameter("ball_info_topic", "/vision/ball_info")
+IRC_vision/src/step/step/ball_navigation_controller.py:25:        self.declare_parameter("command_topic", "/navigation/ball_command")
+IRC_vision/src/step/step/ball_navigation_controller.py:80:        self.publisher = self.create_publisher(String, command_topic, 10)
+IRC_vision/src/step/step/ball_navigation_controller.py:81:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/ball_navigation_controller.py:156:        self.publisher.publish(output)
+IRC_vision/src/step/step/mission_state_estimator.py:108:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/mission_state_estimator.py:109:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/mission_state_estimator.py:110:        self.declare_parameter("mission_state_topic", "/vision/mission_state")
+IRC_vision/src/step/step/mission_state_estimator.py:148:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/mission_state_estimator.py:154:        self.line_subscription = self.create_subscription(
+IRC_vision/src/step/step/mission_state_estimator.py:161:        self.detection_subscription = self.create_subscription(
+IRC_vision/src/step/step/mission_state_estimator.py:454:        self.publisher.publish(message)
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:6:    /vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:10:    /vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:84:            "/vision/detections",
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:94:            "/vision/line_info",
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:335:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:341:        self.detection_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:348:        self.image_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v3.py:425:            self.publisher.publish(output)
+IRC_vision/src/step/step/goal_analyzer.py:96:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/goal_analyzer.py:105:        self.declare_parameter("output_topic", "/vision/goal_info")
+IRC_vision/src/step/step/goal_analyzer.py:176:        self.publisher = self.create_publisher(String, self.output_topic, 10)
+IRC_vision/src/step/step/goal_analyzer.py:177:        self.create_subscription(
+IRC_vision/src/step/step/goal_analyzer.py:183:        self.create_subscription(
+IRC_vision/src/step/step/goal_analyzer.py:189:        self.create_subscription(
+IRC_vision/src/step/step/goal_analyzer.py:519:    def _publish(self, info: GoalInfo) -> None:
+IRC_vision/src/step/step/goal_analyzer.py:526:        self.publisher.publish(message)
+IRC_vision/src/step/step/goal_analyzer.py:644:                self._publish(self._empty_info())
+IRC_vision/src/step/step/goal_analyzer.py:657:        self._publish(
+IRC_vision/src/step/step/ball_analyzer.py:103:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/ball_analyzer.py:112:        self.declare_parameter("output_topic", "/vision/ball_info")
+IRC_vision/src/step/step/ball_analyzer.py:199:        self.publisher = self.create_publisher(String, self.output_topic, 10)
+IRC_vision/src/step/step/ball_analyzer.py:200:        self.create_subscription(
+IRC_vision/src/step/step/ball_analyzer.py:206:        self.create_subscription(
+IRC_vision/src/step/step/ball_analyzer.py:212:        self.create_subscription(
+IRC_vision/src/step/step/ball_analyzer.py:604:    def _publish(self, info: BallInfo) -> None:
+IRC_vision/src/step/step/ball_analyzer.py:611:        self.publisher.publish(message)
+IRC_vision/src/step/step/ball_analyzer.py:697:                self._publish(self._empty_info())
+IRC_vision/src/step/step/ball_analyzer.py:712:        self._publish(
+IRC_vision/src/step/step/step_motion_pose_test.py:52:    - it reads /vision/line_info
+IRC_vision/src/step/step/step_motion_pose_test.py:63:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/step_motion_pose_test.py:64:        self.declare_parameter("robot_pose_topic", "/vision/robot_pose")
+IRC_vision/src/step/step/step_motion_pose_test.py:110:        self.publisher = self.create_publisher(String, self.robot_pose_topic, 10)
+IRC_vision/src/step/step/step_motion_pose_test.py:111:        self.line_subscription = self.create_subscription(
+IRC_vision/src/step/step/step_motion_pose_test.py:367:        self.publisher.publish(message)
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:6:    /vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:10:    /vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:84:            "/vision/detections",
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:94:            "/vision/line_info",
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:373:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:379:        self.detection_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:386:        self.image_subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v4.py:463:            self.publisher.publish(output)
+IRC_vision/src/step/step/line_path_visualizer_v1.py:10:/vision/line_info
+IRC_vision/src/step/step/line_path_visualizer_v1.py:17:    /vision/line_path/image
+IRC_vision/src/step/step/line_path_visualizer_v1.py:57:    """Visualize line geometry from /vision/line_info."""
+IRC_vision/src/step/step/line_path_visualizer_v1.py:73:            "/vision/line_info",
+IRC_vision/src/step/step/line_path_visualizer_v1.py:78:            "/vision/line_path/image",
+IRC_vision/src/step/step/line_path_visualizer_v1.py:217:        self.line_info_subscription = self.create_subscription(
+IRC_vision/src/step/step/line_path_visualizer_v1.py:224:        self.image_subscription = self.create_subscription(
+IRC_vision/src/step/step/line_path_visualizer_v1.py:234:            self.annotated_image_publisher = self.create_publisher(
+IRC_vision/src/step/step/line_path_visualizer_v1.py:361:                self.annotated_image_publisher.publish(
+IRC_vision/src/step/step/line_navigation_controller.py:23:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/line_navigation_controller.py:24:        self.declare_parameter("command_topic", "/navigation/line_command")
+IRC_vision/src/step/step/line_navigation_controller.py:95:        self.publisher = self.create_publisher(String, command_topic, 10)
+IRC_vision/src/step/step/line_navigation_controller.py:96:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/line_navigation_controller.py:171:        self.publisher.publish(output)
+IRC_vision/src/step/step/yolo_line_analyzer.py:7:/vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer.py:13:/vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer.py:129:    /vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer.py:149:    /vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer.py:161:            "/vision/detections",
+IRC_vision/src/step/step/yolo_line_analyzer.py:171:            "/vision/line_info",
+IRC_vision/src/step/step/yolo_line_analyzer.py:679:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo_line_analyzer.py:686:            self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer.py:695:            self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer.py:832:            self.publisher.publish(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:32:    """JSON payload published on /vision/visual_odom."""
+IRC_vision/src/step/step/rgbd_visual_odometry.py:82:        self.declare_parameter("output_topic", "/vision/visual_odom")
+IRC_vision/src/step/step/rgbd_visual_odometry.py:156:        self.publisher = self.create_publisher(String, self.output_topic, 10)
+IRC_vision/src/step/step/rgbd_visual_odometry.py:157:        self.create_subscription(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:163:        self.create_subscription(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:169:        self.create_subscription(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:353:    def _publish(self, info: VisualOdomInfo) -> None:
+IRC_vision/src/step/step/rgbd_visual_odometry.py:358:        self.publisher.publish(message)
+IRC_vision/src/step/step/rgbd_visual_odometry.py:486:            self._publish(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:501:            self._publish(
+IRC_vision/src/step/step/rgbd_visual_odometry.py:518:            self._publish(self._blank_info("optical_flow_failed", elapsed))
+IRC_vision/src/step/step/rgbd_visual_odometry.py:531:            self._publish(info)
+IRC_vision/src/step/step/rgbd_visual_odometry.py:550:            self._publish(info)
+IRC_vision/src/step/step/rgbd_visual_odometry.py:567:            self._publish(info)
+IRC_vision/src/step/step/rgbd_visual_odometry.py:629:        self._publish(info)
+IRC_vision/src/step/step/line_path_visualizer.py:10:/vision/line_info
+IRC_vision/src/step/step/line_path_visualizer.py:14:/navigation/line_command
+IRC_vision/src/step/step/line_path_visualizer.py:21:    /vision/line_path/image
+IRC_vision/src/step/step/line_path_visualizer.py:60:    """Visualize line geometry from /vision/line_info."""
+IRC_vision/src/step/step/line_path_visualizer.py:76:            "/vision/line_info",
+IRC_vision/src/step/step/line_path_visualizer.py:81:            "/navigation/line_command",
+IRC_vision/src/step/step/line_path_visualizer.py:86:            "/vision/line_path/image",
+IRC_vision/src/step/step/line_path_visualizer.py:257:        self.line_info_subscription = self.create_subscription(
+IRC_vision/src/step/step/line_path_visualizer.py:264:        self.navigation_command_subscription = self.create_subscription(
+IRC_vision/src/step/step/line_path_visualizer.py:271:        self.image_subscription = self.create_subscription(
+IRC_vision/src/step/step/line_path_visualizer.py:281:            self.annotated_image_publisher = self.create_publisher(
+IRC_vision/src/step/step/line_path_visualizer.py:449:                self.annotated_image_publisher.publish(
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:7:/vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:13:/vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:129:    /vision/detections
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:149:    /vision/line_info
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:161:            "/vision/detections",
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:171:            "/vision/line_info",
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:592:        self.publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:599:            self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:608:            self.create_subscription(
+IRC_vision/src/step/step/yolo_line_analyzer_v5.py:718:            self.publisher.publish(
+IRC_vision/src/step/step/hurdle_navigation_controller.py:24:        self.declare_parameter("hurdle_info_topic", "/vision/hurdle_info")
+IRC_vision/src/step/step/hurdle_navigation_controller.py:27:            "/navigation/hurdle_command",
+IRC_vision/src/step/step/hurdle_navigation_controller.py:58:        self.publisher = self.create_publisher(String, command_topic, 10)
+IRC_vision/src/step/step/hurdle_navigation_controller.py:59:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/hurdle_navigation_controller.py:130:        self.publisher.publish(output)
+IRC_vision/src/step/step/hurdle_analyzer.py:102:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/hurdle_analyzer.py:111:        self.declare_parameter("output_topic", "/vision/hurdle_info")
+IRC_vision/src/step/step/hurdle_analyzer.py:174:        self.publisher = self.create_publisher(String, self.output_topic, 10)
+IRC_vision/src/step/step/hurdle_analyzer.py:175:        self.create_subscription(
+IRC_vision/src/step/step/hurdle_analyzer.py:181:        self.create_subscription(
+IRC_vision/src/step/step/hurdle_analyzer.py:187:        self.create_subscription(
+IRC_vision/src/step/step/hurdle_analyzer.py:543:    def _publish(self, info: HurdleInfo) -> None:
+IRC_vision/src/step/step/hurdle_analyzer.py:550:        self.publisher.publish(message)
+IRC_vision/src/step/step/hurdle_analyzer.py:581:                self._publish(self._empty_info())
+IRC_vision/src/step/step/hurdle_analyzer.py:587:        self._publish(
+IRC_vision/src/step/step/goal_navigation_controller.py:24:        self.declare_parameter("goal_info_topic", "/vision/goal_info")
+IRC_vision/src/step/step/goal_navigation_controller.py:25:        self.declare_parameter("command_topic", "/navigation/goal_command")
+IRC_vision/src/step/step/goal_navigation_controller.py:53:        self.publisher = self.create_publisher(String, command_topic, 10)
+IRC_vision/src/step/step/goal_navigation_controller.py:54:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/goal_navigation_controller.py:120:        self.publisher.publish(output)
+IRC_vision/src/step/step/mission_map_visualizer.py:19:    """Draw a simple top-down course map from /vision/mission_state."""
+IRC_vision/src/step/step/mission_map_visualizer.py:24:        self.declare_parameter("mission_state_topic", "/vision/mission_state")
+IRC_vision/src/step/step/mission_map_visualizer.py:25:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/mission_map_visualizer.py:26:        self.declare_parameter("robot_pose_topic", "/vision/robot_pose")
+IRC_vision/src/step/step/mission_map_visualizer.py:50:        self.mission_subscription = self.create_subscription(
+IRC_vision/src/step/step/mission_map_visualizer.py:57:        self.line_subscription = self.create_subscription(
+IRC_vision/src/step/step/mission_map_visualizer.py:64:        self.robot_pose_subscription = self.create_subscription(
+IRC_vision/src/step/step/mission_map_visualizer.py:593:                "Waiting for /vision/mission_state",
+IRC_vision/src/step/step/imu_line_pose_estimator.py:62:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/imu_line_pose_estimator.py:63:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/imu_line_pose_estimator.py:64:        self.declare_parameter("robot_pose_topic", "/vision/robot_pose")
+IRC_vision/src/step/step/imu_line_pose_estimator.py:185:        self.publisher = self.create_publisher(String, self.robot_pose_topic, 10)
+IRC_vision/src/step/step/imu_line_pose_estimator.py:186:        self.imu_subscription = self.create_subscription(
+IRC_vision/src/step/step/imu_line_pose_estimator.py:192:        self.accel_subscription = self.create_subscription(
+IRC_vision/src/step/step/imu_line_pose_estimator.py:198:        self.line_subscription = self.create_subscription(
+IRC_vision/src/step/step/imu_line_pose_estimator.py:204:        self.detection_subscription = self.create_subscription(
+IRC_vision/src/step/step/imu_line_pose_estimator.py:838:        self.publisher.publish(message)
+IRC_vision/src/step/step/yolo26_detector.py:71:        self.declare_parameter("detections_topic", "/vision/detections")
+IRC_vision/src/step/step/yolo26_detector.py:73:            "annotated_image_topic", "/vision/detections/image"
+IRC_vision/src/step/step/yolo26_detector.py:75:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/yolo26_detector.py:78:        self.declare_parameter("ball_info_topic", "/vision/ball_info")
+IRC_vision/src/step/step/yolo26_detector.py:81:        self.declare_parameter("goal_info_topic", "/vision/goal_info")
+IRC_vision/src/step/step/yolo26_detector.py:84:        self.declare_parameter("hurdle_info_topic", "/vision/hurdle_info")
+IRC_vision/src/step/step/yolo26_detector.py:89:            "/navigation/motion_command",
+IRC_vision/src/step/step/yolo26_detector.py:200:        self.detections_publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo26_detector.py:203:        self.annotated_publisher = self.create_publisher(
+IRC_vision/src/step/step/yolo26_detector.py:206:        self.subscription = self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:212:        self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:218:        self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:224:        self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:230:        self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:236:        self.create_subscription(
+IRC_vision/src/step/step/yolo26_detector.py:1447:        self.detections_publisher.publish(output)
+IRC_vision/src/step/step/yolo26_detector.py:1481:                self.annotated_publisher.publish(annotated_message)
+IRC_vision/src/step/step/motion_decision_node.py:25:        self.declare_parameter("line_info_topic", "/vision/line_info")
+IRC_vision/src/step/step/motion_decision_node.py:26:        self.declare_parameter("ball_info_topic", "/vision/ball_info")
+IRC_vision/src/step/step/motion_decision_node.py:27:        self.declare_parameter("goal_info_topic", "/vision/goal_info")
+IRC_vision/src/step/step/motion_decision_node.py:28:        self.declare_parameter("hurdle_info_topic", "/vision/hurdle_info")
+IRC_vision/src/step/step/motion_decision_node.py:29:        self.declare_parameter("mission_phase_topic", "/mission/phase")
+IRC_vision/src/step/step/motion_decision_node.py:32:            "/navigation/motion_command",
+IRC_vision/src/step/step/motion_decision_node.py:65:            self.create_subscription(
+IRC_vision/src/step/step/motion_decision_node.py:76:        self.create_subscription(
+IRC_vision/src/step/step/motion_decision_node.py:83:        self.publisher = self.create_publisher(String, command_topic, 10)
+IRC_vision/src/step/step/motion_decision_node.py:180:        self.publisher.publish(output)
