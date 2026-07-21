@@ -42,3 +42,25 @@ gazebo_roll_x_pitch_*.csv
 gazebo_foot_orientation_log.csv
 gazebo_ankle_roll_sign_response_log.csv
 gazebo_ankle_roll_sign_orientation_log.csv
+
+# ROS 2 generated directories
+build/
+install/
+log/
+
+# Python generated files
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Temporary backups and scans
+*.before_*
+Algorithm/*_scan_*.txt
+Algorithm/*_extract_*.txt
+Algorithm/dynamics_*_2026-07-22.txt
+Algorithm/goal_hurdle_action_logic_*.txt
+Algorithm/motion_*_2026-07-22.txt
+Algorithm/navigation_*_2026-07-22.txt
+
+# Local archives
+*.zip

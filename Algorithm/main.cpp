@@ -270,6 +270,7 @@ private:
     void MotionLoop()
     {
         robot_msgs::msg::MotionEnd end_msg;
+        const int completed_command = current_go_;
 
         if (current_go_ == 98){
             RCLCPP_INFO(this->get_logger(), "[STOP] 명령 수신");
@@ -287,6 +288,8 @@ private:
 
         // 아무 행동 없이 그냥 motion_end만 
         if (current_go_ == 97){
+            end_msg.motion_end_detect = true;
+            end_msg.command = completed_command;
             end_msg.motion_end_detect = true;
             motion_end_pub_->publish(end_msg);
             motion_in_progress_ = false;            // 상태 초기화             
@@ -522,9 +525,16 @@ private:
             }
 
             end_msg.motion_end_detect = true;
+            end_msg.command = completed_command;
+            end_msg.motion_end_detect = true;
             motion_end_pub_->publish(end_msg);
-            RCLCPP_INFO(this->get_logger(),
-                    "motion_end publish = %d", end_msg.motion_end_detect);
+            RCLCPP_INFO(
+                this->get_logger(),
+                "motion_end publish: finished=%d, command=%d, motion_end_detect=%d",
+                end_msg.finished,
+                end_msg.command,
+                end_msg.motion_end_detect
+            );
 
             callback_->SetTurnsRemaining(0);   //turn_remaing을 0으로 초기화
             motion_in_progress_ = false;            // 상태 초기화             
