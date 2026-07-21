@@ -1,0 +1,13 @@
+=== STATIC ACTIONS ===
+APPROACH_GOAL
+APPROACH_HURDLE
+GO
+GOAL_LOST_STOP
+RETREAT_GOAL
+SHOT
+WAIT
+WAIT_GO_CONFIRMATION
+WAIT_SCORE_CONFIRMATION
+
+=== DYNAMIC ACTION LOCATIONS ===
+src/mission_control/mission_control/motion_decision_planner.py:610: dynamic f-string action

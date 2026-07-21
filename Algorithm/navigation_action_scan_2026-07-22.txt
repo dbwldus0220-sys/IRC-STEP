@@ -1,0 +1,88 @@
+src/mission_control/test/test_motion_decision_planner.py:97:    assert decision.action == "SHOT"
+src/mission_control/test/test_motion_decision_planner.py:116:    assert decision.action == "GO"
+src/mission_control/test/test_motion_decision_planner.py:136:    assert decision.action == "GO"
+src/mission_control/test/test_motion_decision_planner.py:152:    assert decision.action == "STRAIGHT"
+src/mission_control/test/test_motion_decision_planner.py:169:    assert decision.action == "STRAIGHT"
+src/mission_control/test/test_motion_decision_planner.py:206:    assert decision.action == "STRAIGHT"
+src/mission_control/test/test_motion_decision_planner.py:228:    assert decision.action == "FINE_FORWARD_STEP"
+src/mission_control/test/test_motion_decision_planner.py:267:    assert stopped.action == "BALL_LOST_STOP"
+src/mission_control/test/test_motion_decision_planner.py:269:    assert turning.action == "RECOVER_TURN_RIGHT"
+src/mission_control/test/test_motion_decision_planner.py:305:    assert decision.action == "GO"
+src/mission_control/test/test_motion_decision_planner.py:334:    assert decision.action == "FINE_FORWARD_STEP"
+src/mission_control/test/test_motion_decision_planner.py:384:    assert centering.action == "RECOVER_TURN_LEFT"
+src/mission_control/test/test_motion_decision_planner.py:419:    assert decision.action == "APPROACH_GOAL"
+src/mission_control/test/test_motion_decision_planner.py:470:    assert stopped.action == "GOAL_LOST_STOP"
+src/mission_control/test/test_motion_decision_planner.py:472:    assert turning.action == "RECOVER_GOAL_TURN_LEFT"
+src/mission_control/test/test_motion_decision_planner.py:522:    assert centering.action == "RECOVER_GOAL_TURN_RIGHT"
+src/mission_control/test/test_motion_decision_planner.py:537:    assert decision.action == "GO"
+src/mission_control/test/test_motion_decision_planner.py:552:    assert decision.action == "STRAIGHT"
+src/mission_control/test/test_motion_decision_planner.py:566:    assert decision.action == "WAIT"
+src/mission_control/test/test_motion_decision_planner.py:580:    assert decision.action == "STRAIGHT"
+src/mission_control/test/test_motion_decision_planner.py:593:    assert decision.action == "WAIT"
+src/mission_control/mission_control/motion_decision_planner.py:34:            "action": self.action,
+src/mission_control/mission_control/motion_decision_planner.py:131:                action="WAIT",
+src/mission_control/mission_control/motion_decision_planner.py:145:                action="WAIT",
+src/mission_control/mission_control/motion_decision_planner.py:159:        action = str(command.get(action_key, "WAIT"))
+src/mission_control/mission_control/motion_decision_planner.py:167:            action=action,
+src/mission_control/mission_control/motion_decision_planner.py:606:            action = "GOAL_LOST_STOP"
+src/mission_control/mission_control/motion_decision_planner.py:610:            action = f"RECOVER_GOAL_TURN_{direction}"
+src/mission_control/mission_control/motion_decision_planner.py:618:            "action": action,
+src/mission_control/mission_control/motion_decision_planner.py:672:            "action": f"RECOVER_GOAL_TURN_{direction}",
+src/step/step/line_navigation_planner.py:35:class NavigationCommand:
+src/step/step/line_navigation_planner.py:119:    def stop(self, reason: str) -> NavigationCommand:
+src/step/step/line_navigation_planner.py:123:        return NavigationCommand(
+src/step/step/line_navigation_planner.py:149:    ) -> NavigationCommand:
+src/step/step/line_navigation_planner.py:242:        return NavigationCommand(
+src/step/step/line_navigation_planner.py:287:    ) -> NavigationCommand:
+src/step/step/line_navigation_planner.py:294:        return NavigationCommand(
+src/step/step/hurdle_navigation_planner.py:45:            "action": self.action,
+src/step/step/hurdle_navigation_planner.py:100:            action="WAIT",
+src/step/step/hurdle_navigation_planner.py:167:            action = "GO"
+src/step/step/hurdle_navigation_planner.py:170:            action = "ALIGN_LEFT" if hurdle_angle > 0.0 else "ALIGN_RIGHT"
+src/step/step/hurdle_navigation_planner.py:173:            action = "WAIT_GO_CONFIRMATION"
+src/step/step/hurdle_navigation_planner.py:179:            action = "APPROACH_HURDLE"
+src/step/step/hurdle_navigation_planner.py:182:            action = "WAIT_GO_CONFIRMATION"
+src/step/step/hurdle_navigation_planner.py:187:            action=action,
+src/step/step/ball_navigation_planner.py:34:class BallNavigationCommand:
+src/step/step/ball_navigation_planner.py:131:    def stop(self, reason: str) -> BallNavigationCommand:
+src/step/step/ball_navigation_planner.py:135:        return BallNavigationCommand(
+src/step/step/ball_navigation_planner.py:162:    ) -> BallNavigationCommand:
+src/step/step/ball_navigation_planner.py:349:    ) -> BallNavigationCommand:
+src/step/step/ball_navigation_planner.py:363:        return BallNavigationCommand(
+src/step/step/ball_navigation_planner.py:396:    ) -> BallNavigationCommand:
+src/step/step/ball_navigation_planner.py:400:        return BallNavigationCommand(
+src/step/step/goal_navigation_planner.py:44:            "action": self.action,
+src/step/step/goal_navigation_planner.py:92:            action="WAIT",
+src/step/step/goal_navigation_planner.py:141:            action = "SHOT"
+src/step/step/goal_navigation_planner.py:144:            action = "ALIGN_RIGHT" if offset > 0.0 else "ALIGN_LEFT"
+src/step/step/goal_navigation_planner.py:147:            action = "WAIT_SCORE_CONFIRMATION"
+src/step/step/goal_navigation_planner.py:150:            action = "APPROACH_GOAL"
+src/step/step/goal_navigation_planner.py:153:            action = "RETREAT_GOAL"
+src/step/step/goal_navigation_planner.py:158:            action=action,
+src/step/step/yolo26_detector.py:1145:        normalized_action = action.strip().upper()
+src/step/step/yolo26_detector.py:1175:                if normalized_action == "PICKUP_NOW"
+src/step/step/yolo26_detector.py:1243:            planner_action = "NO COMMAND"
+src/step/step/yolo26_detector.py:1246:            selected_action = str(decision.get("action", "WAIT")).upper()
+src/step/step/yolo26_detector.py:1247:            planner_action = f"{planner_source} / {selected_action}"
+src/step/step/yolo26_detector.py:1364:        decision_action = (
+src/step/step/yolo26_detector.py:1448:        planner_action = (
+src/step/step/yolo26_detector.py:1705:            planner_action = "NO COMMAND"
+src/step/step/yolo26_detector.py:1708:            selected_action = str(decision.get("action", "WAIT")).upper()
+src/step/step/yolo26_detector.py:1709:            planner_action = f"{planner_source} / {selected_action}"
+src/step/step/yolo26_detector.py:2002:        decision_action = (
+src/step/step/yolo26_detector.py:2012:                decision_action == "BALL_LOST_STOP"
+src/step/step/yolo26_detector.py:2021:                decision_action == "GOAL_LOST_STOP"
+src/step/test/test_hurdle_navigation_planner.py:32:    assert command.action == "GO"
+src/step/test/test_hurdle_navigation_planner.py:42:    assert command.action == "WAIT_GO_CONFIRMATION"
+src/step/test/test_hurdle_navigation_planner.py:52:    assert command.action == "GO"
+src/step/test/test_hurdle_navigation_planner.py:64:    assert command.action == expected
+src/step/test/test_hurdle_navigation_planner.py:73:    assert command.action == "GO"
+src/step/test/test_hurdle_navigation_planner.py:94:    assert command.action == expected
+src/step/test/test_hurdle_navigation_planner.py:118:    assert command.action == "WAIT"
+src/step/test/test_hurdle_navigation_planner.py:141:    assert far.action == "APPROACH_HURDLE"
+src/step/test/test_hurdle_navigation_planner.py:143:    assert close.action == "GO"
+src/step/test/test_goal_navigation_planner.py:27:    assert command.action == "WAIT"
+src/step/test/test_goal_navigation_planner.py:37:    assert command.action == "APPROACH_GOAL"
+src/step/test/test_goal_navigation_planner.py:45:    assert command.action == "SHOT"
+src/step/test/test_goal_navigation_planner.py:54:    assert command.action == "WAIT_SCORE_CONFIRMATION"
+src/step/test/test_goal_navigation_planner.py:65:    assert command.action == "ALIGN_LEFT"
