@@ -112,6 +112,8 @@ private:
     std::atomic<int> turns_remaining_{0};
     bool motion_in_progress_ = false;                         // 현재 모션 실행 중인지 여부
     int current_go_ = 0;
+    int requested_command_ = 0;
+    bool requested_command_active_ = false;
     int count1 = 0;
     int count2 = 0;
     int count3 = 0;
@@ -140,6 +142,41 @@ private:
 
 
     bool out_turn_end = false; // out일때 회전 했는지
+
+    void PublishMotionEnd(int completed_command)
+    {
+        robot_msgs::msg::MotionEnd end_msg;
+
+        if (!requested_command_active_)
+        {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "motion_end publish without active request: "
+                "fallback completed_command=%d",
+                completed_command
+            );
+        }
+
+        end_msg.finished = true;
+        end_msg.motion_end_detect = true;
+        end_msg.command = requested_command_active_
+            ? requested_command_
+            : completed_command;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "motion_end publish: requested_command=%d, "
+            "final_internal_command=%d, finished=%d, motion_end_detect=%d",
+            requested_command_,
+            completed_command,
+            end_msg.finished,
+            end_msg.motion_end_detect
+        );
+
+        motion_end_pub_->publish(end_msg);
+        requested_command_ = 0;
+        requested_command_active_ = false;
+    }
 
     void LogDofSnapshot(const char* tag)
     {
@@ -478,6 +515,7 @@ private:
         // 모션 command 저장
         current_go_ = command_;
         requested_command_ = command_;
+        requested_command_active_ = true;
 
         if (current_go_ == 2 || current_go_ == 3)
         {
@@ -495,8 +533,6 @@ private:
     // 주기적으로 각도 갱신 및 모션 종료 여부 판단
     void MotionLoop()
     {
-        robot_msgs::msg::MotionEnd end_msg;
-
         if (current_go_ == 98){
             if (!dxl_->IsHardwarePrepared())
             {
@@ -538,15 +574,11 @@ private:
 
         // 아무 행동 없이 그냥 motion_end만 
         if (current_go_ == 97){
-            end_msg.finished = true;
-            end_msg.command = requested_command_;
-            end_msg.motion_end_detect = true;
-            motion_end_pub_->publish(end_msg);
+            PublishMotionEnd(current_go_);
 
             motion_in_progress_ = false;            // 상태 초기화
             motion_loop_timer_->cancel();           // 타이머 중지
             current_go_ = 0;
-            requested_command_ = 0;
             return;
         }
 
@@ -776,24 +808,12 @@ private:
                 recovery_mode = false;
             }
 
-            end_msg.finished = true;
-            end_msg.command = requested_command_;
-            end_msg.motion_end_detect = true;
-            motion_end_pub_->publish(end_msg);
-
-            RCLCPP_INFO(
-                this->get_logger(),
-                "motion_end publish: finished=%d, command=%d, motion_end_detect=%d",
-                end_msg.finished,
-                end_msg.command,
-                end_msg.motion_end_detect
-            );
+            PublishMotionEnd(current_go_);
 
             callback_->SetTurnsRemaining(0);   // turn_remaining을 0으로 초기화
             motion_in_progress_ = false;       // 상태 초기화
             motion_loop_timer_->cancel();      // 타이머 중지
             current_go_ = 0;
-            requested_command_ = 0;
         }
     }
 
@@ -804,8 +824,6 @@ private:
     std::shared_ptr<Pick> pick_;
     std::shared_ptr<Dxl_Controller> dxl_ctrl_;
     std::shared_ptr<Callback> callback_;
-
-    int requested_command_ = 0;
 
 };
 
