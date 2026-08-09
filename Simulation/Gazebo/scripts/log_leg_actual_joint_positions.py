@@ -7,7 +7,7 @@ import math
 import time
 from pathlib import Path
 
-from publish_leg_constant_pose import CONSTANT_POSE
+from publish_leg_constant_pose import CONSTANT_POSE, STANDING_CANDIDATE_POSE
 from replay_roll_joints_from_csv import (
     LEG_JOINT_TOPICS,
     JointTrackingSubscriber,
@@ -21,6 +21,11 @@ DEFAULT_DT = 0.5
 
 DOCUMENTED_LEG_JOINT_TARGETS = {
     topic.removeprefix("/step/").removesuffix("/cmd_pos"): CONSTANT_POSE[column]
+    for column, topic in LEG_JOINT_TOPICS.items()
+}
+STANDING_LEG_JOINT_TARGETS = {
+    topic.removeprefix("/step/").removesuffix("/cmd_pos"):
+        STANDING_CANDIDATE_POSE[column]
     for column, topic in LEG_JOINT_TOPICS.items()
 }
 LEG_JOINT_NAMES = tuple(DOCUMENTED_LEG_JOINT_TARGETS)
@@ -64,11 +69,12 @@ def parse_args():
     )
     parser.add_argument(
         "--target-mode",
-        choices=("default", "zero"),
+        choices=("default", "standing", "zero"),
         default="default",
         help=(
             "Target used for display and error calculation: documented "
-            "default pose or all-zero pose (default: default)"
+            "default pose, test standing candidate, or all-zero pose "
+            "(default: default)"
         ),
     )
     args = parser.parse_args()
@@ -117,11 +123,12 @@ def print_sample(
 
 def main() -> int:
     args = parse_args()
-    targets = (
-        {joint_name: 0.0 for joint_name in LEG_JOINT_NAMES}
-        if args.target_mode == "zero"
-        else DOCUMENTED_LEG_JOINT_TARGETS
-    )
+    targets_by_mode = {
+        "default": DOCUMENTED_LEG_JOINT_TARGETS,
+        "standing": STANDING_LEG_JOINT_TARGETS,
+        "zero": {joint_name: 0.0 for joint_name in LEG_JOINT_NAMES},
+    }
+    targets = targets_by_mode[args.target_mode]
     message_type = joint_state_message_type(args.topic)
     print("[GAZEBO LEG ACTUAL POSITION LOGGER]")
     print(f"topic: {args.topic}")
