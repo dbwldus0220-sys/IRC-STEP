@@ -70,6 +70,50 @@ CSV_COLUMNS = (
     "com_support_signed_distance",
     "source_sim_time",
     "pose_updated",
+    "nearest_support_edge_index",
+    "nearest_support_edge_x1",
+    "nearest_support_edge_y1",
+    "nearest_support_edge_x2",
+    "nearest_support_edge_y2",
+    "closest_support_x",
+    "closest_support_y",
+    "support_inward_normal_x",
+    "support_inward_normal_y",
+    "nearest_support_edge_angle_rad",
+    "nearest_support_edge_distance_abs",
+    "contact_hull_vertex_count",
+    "contact_hull_signed_distance",
+    "contact_nearest_edge_index",
+    "contact_nearest_edge_x1",
+    "contact_nearest_edge_y1",
+    "contact_nearest_edge_x2",
+    "contact_nearest_edge_y2",
+    "contact_closest_x",
+    "contact_closest_y",
+    "contact_inward_normal_x",
+    "contact_inward_normal_y",
+    "contact_nearest_edge_angle_rad",
+    "contact_nearest_edge_distance_abs",
+    "left_sole_x",
+    "left_sole_y",
+    "left_sole_z",
+    "left_sole_roll",
+    "left_sole_pitch",
+    "left_sole_yaw",
+    "left_sole_base_relative_x",
+    "left_sole_base_relative_y",
+    "right_sole_x",
+    "right_sole_y",
+    "right_sole_z",
+    "right_sole_roll",
+    "right_sole_pitch",
+    "right_sole_yaw",
+    "right_sole_base_relative_x",
+    "right_sole_base_relative_y",
+)
+
+CALCULATED_BASE_COLUMN_COUNT = (
+    CSV_COLUMNS.index("com_support_signed_distance") + 1
 )
 
 SOLE_COLLISION_NAMES = {
@@ -391,18 +435,91 @@ def point_to_segment_distance(point, first, second):
     return math.hypot(point[0] - closest_x, point[1] - closest_y)
 
 
-def signed_distance_to_polygon(point, polygon):
+def nearest_polygon_edge_diagnostics(point, polygon):
+    """Return deterministic nearest-edge geometry and signed distance."""
+    nan_result = {
+        "edge_index": math.nan,
+        "edge_start_x": math.nan,
+        "edge_start_y": math.nan,
+        "edge_end_x": math.nan,
+        "edge_end_y": math.nan,
+        "closest_x": math.nan,
+        "closest_y": math.nan,
+        "inward_normal_x": math.nan,
+        "inward_normal_y": math.nan,
+        "edge_angle_rad": math.nan,
+        "distance_abs": math.nan,
+        "signed_distance": math.nan,
+    }
     if len(polygon) < 3:
-        return math.nan
-    distance = min(
-        point_to_segment_distance(
-            point,
-            polygon[index],
-            polygon[(index + 1) % len(polygon)],
-        )
-        for index in range(len(polygon))
+        return nan_result
+
+    centroid = (
+        sum(vertex[0] for vertex in polygon) / len(polygon),
+        sum(vertex[1] for vertex in polygon) / len(polygon),
     )
-    return distance if point_in_convex_polygon(point, polygon) else -distance
+    best = None
+    for index, first in enumerate(polygon):
+        second = polygon[(index + 1) % len(polygon)]
+        edge_x = second[0] - first[0]
+        edge_y = second[1] - first[1]
+        length_squared = edge_x * edge_x + edge_y * edge_y
+        if length_squared <= 0.0:
+            continue
+        projection = (
+            (point[0] - first[0]) * edge_x
+            + (point[1] - first[1]) * edge_y
+        ) / length_squared
+        projection = min(1.0, max(0.0, projection))
+        closest_x = first[0] + projection * edge_x
+        closest_y = first[1] + projection * edge_y
+        distance = math.hypot(
+            point[0] - closest_x,
+            point[1] - closest_y,
+        )
+        if best is None or distance < best[0]:
+            best = (
+                distance, index, first, second, closest_x, closest_y,
+                edge_x, edge_y, math.sqrt(length_squared),
+            )
+
+    if best is None:
+        return nan_result
+
+    (
+        distance, index, first, second, closest_x, closest_y,
+        edge_x, edge_y, length,
+    ) = best
+    normal_x = -edge_y / length
+    normal_y = edge_x / length
+    toward_centroid = (
+        normal_x * (centroid[0] - closest_x)
+        + normal_y * (centroid[1] - closest_y)
+    )
+    if toward_centroid < 0.0:
+        normal_x = -normal_x
+        normal_y = -normal_y
+    signed_distance = (
+        distance if point_in_convex_polygon(point, polygon) else -distance
+    )
+    return {
+        "edge_index": index,
+        "edge_start_x": first[0],
+        "edge_start_y": first[1],
+        "edge_end_x": second[0],
+        "edge_end_y": second[1],
+        "closest_x": closest_x,
+        "closest_y": closest_y,
+        "inward_normal_x": normal_x,
+        "inward_normal_y": normal_y,
+        "edge_angle_rad": math.atan2(edge_y, edge_x),
+        "distance_abs": distance,
+        "signed_distance": signed_distance,
+    }
+
+
+def signed_distance_to_polygon(point, polygon):
+    return nearest_polygon_edge_diagnostics(point, polygon)["signed_distance"]
 
 
 def quaternion_to_rpy(quaternion):
@@ -572,6 +689,20 @@ def calculate_row(
     base_rpy = quaternion_to_rpy(base_quaternion)
 
     sole_geometry = sole_world_geometry(world_link_poses, sole_boxes)
+    sole_pose_fields = []
+    base_yaw_cos = math.cos(base_rpy[2])
+    base_yaw_sin = math.sin(base_rpy[2])
+    for side in ("left", "right"):
+        sole_position, sole_quaternion = sole_geometry[side]["pose"]
+        sole_rpy = quaternion_to_rpy(sole_quaternion)
+        delta_x = sole_position[0] - base_position[0]
+        delta_y = sole_position[1] - base_position[1]
+        sole_pose_fields.extend((
+            *sole_position,
+            *sole_rpy,
+            base_yaw_cos * delta_x + base_yaw_sin * delta_y,
+            -base_yaw_sin * delta_x + base_yaw_cos * delta_y,
+        ))
     support_polygon = convex_hull(
         [
             (corner[0], corner[1])
@@ -588,6 +719,9 @@ def calculate_row(
         (com[0], com[1]),
         support_polygon,
     )
+    support_edge = nearest_polygon_edge_diagnostics(
+        (com[0], com[1]), support_polygon
+    )
 
     left_points = contacts["left"]["points"]
     right_points = contacts["right"]["points"]
@@ -601,6 +735,32 @@ def calculate_row(
 
     left_force_age = force_age("left")
     right_force_age = force_age("right")
+    left_fresh = (
+        contacts["left"]["timestamp"] is not None
+        and math.isfinite(left_force_age)
+        and left_force_age <= force_stale_threshold
+    )
+    right_fresh = (
+        contacts["right"]["timestamp"] is not None
+        and math.isfinite(right_force_age)
+        and right_force_age <= force_stale_threshold
+    )
+    fresh_left_points = left_points if left_fresh else ()
+    fresh_right_points = right_points if right_fresh else ()
+    fresh_contact_points = fresh_left_points + fresh_right_points
+    unique_contact_xy = sorted(
+        set((point[0], point[1]) for point in fresh_contact_points)
+    )
+    contact_polygon = (
+        convex_hull(unique_contact_xy) if len(unique_contact_xy) >= 3 else []
+    )
+    contact_edge = nearest_polygon_edge_diagnostics(
+        (com[0], com[1]), contact_polygon
+    )
+    contact_hull_vertex_count = (
+        len(contact_polygon) if len(unique_contact_xy) >= 3
+        else len(unique_contact_xy)
+    )
 
     def mean_coordinate(points, index):
         return (
@@ -634,6 +794,41 @@ def calculate_row(
         int(not math.isfinite(left_force_age) or left_force_age > force_stale_threshold),
         int(not math.isfinite(right_force_age) or right_force_age > force_stale_threshold),
         support_signed_distance,
+        support_edge["edge_index"],
+        support_edge["edge_start_x"],
+        support_edge["edge_start_y"],
+        support_edge["edge_end_x"],
+        support_edge["edge_end_y"],
+        support_edge["closest_x"],
+        support_edge["closest_y"],
+        support_edge["inward_normal_x"],
+        support_edge["inward_normal_y"],
+        support_edge["edge_angle_rad"],
+        support_edge["distance_abs"],
+        contact_hull_vertex_count,
+        contact_edge["signed_distance"],
+        contact_edge["edge_index"],
+        contact_edge["edge_start_x"],
+        contact_edge["edge_start_y"],
+        contact_edge["edge_end_x"],
+        contact_edge["edge_end_y"],
+        contact_edge["closest_x"],
+        contact_edge["closest_y"],
+        contact_edge["inward_normal_x"],
+        contact_edge["inward_normal_y"],
+        contact_edge["edge_angle_rad"],
+        contact_edge["distance_abs"],
+        *sole_pose_fields,
+    )
+
+
+def complete_row_with_runtime_fields(row, source_sim_time, pose_updated):
+    """Keep all legacy CSV columns in place before appended diagnostics."""
+    return (
+        *row[:CALCULATED_BASE_COLUMN_COUNT],
+        source_sim_time,
+        pose_updated,
+        *row[CALCULATED_BASE_COLUMN_COUNT:],
     )
 
 
@@ -652,6 +847,9 @@ def build_geometry_diagnostics(link_poses, inertials, sole_boxes, model_name, co
         "sole_geometry": sole_geometry,
         "support_polygon": support_polygon,
         "signed_distance": signed_distance_to_polygon(com_xy, support_polygon),
+        "nearest_edge": nearest_polygon_edge_diagnostics(
+            com_xy, support_polygon
+        ),
     }
 
 
@@ -945,7 +1143,9 @@ def main() -> int:
                     print(f"[ERROR] {error}")
                     return 1
                 source_sim_time = sim_time - logging_start_sim_time
-                complete_row = (*row, source_sim_time, pose_updated)
+                complete_row = complete_row_with_runtime_fields(
+                    row, source_sim_time, pose_updated
+                )
                 writer.writerow(complete_row)
                 output_file.flush()
                 rows_written += 1
