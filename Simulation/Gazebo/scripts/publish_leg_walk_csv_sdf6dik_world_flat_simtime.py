@@ -43,6 +43,7 @@ DEFAULT_LEG_JOINT_STATE_TOPIC = "/step/leg_joint_states"
 RIGHT_SOLE_COLLISION_NAME = "right_sole_box_collision"
 VELOCITY_WARNING_RAD_S = 4.71238898
 ORIENTATION_CACHE_EPS_RAD = 1e-6
+CORRECTION_RELEASE_TOLERANCE_M = 1e-9
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
@@ -107,6 +108,10 @@ def parse_args():
     parser.add_argument("--swing-world-z-ramp-in", type=float)
     parser.add_argument("--swing-world-z-ramp-out", type=float)
     parser.add_argument(
+        "--swing-world-z-max-correction-release-speed-mps", type=float,
+        help="optional maximum swing world-Z correction release speed",
+    )
+    parser.add_argument(
         "--max-feedback-joint-speed-deg-s", type=float,
         help="optional per-leg feedback command rate limit",
     )
@@ -146,6 +151,16 @@ def parse_args():
     parser.add_argument(
         "--touchdown-left-feedback-ramp-out", type=float, default=0.05,
     )
+    parser.add_argument(
+        "--touchdown-z-arrest", action="store_true",
+        help="arrest downward RIGHT world-Z target at first contact",
+    )
+    parser.add_argument(
+        "--touchdown-z-arrest-threshold-n", type=float, default=20.0,
+    )
+    parser.add_argument(
+        "--touchdown-z-arrest-confirm-s", type=float, default=0.02,
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     swing_values = (
@@ -174,6 +189,8 @@ def parse_args():
         ))
     if args.max_feedback_joint_speed_deg_s is not None:
         numeric.append(args.max_feedback_joint_speed_deg_s)
+    if args.swing_world_z_max_correction_release_speed_mps is not None:
+        numeric.append(args.swing_world_z_max_correction_release_speed_mps)
     lateral_values = (
         args.lateral_balance_planner_csv,
         args.lateral_balance_start, args.lateral_balance_end,
@@ -226,6 +243,21 @@ def parse_args():
         and args.max_feedback_joint_speed_deg_s <= 0.0
     ):
         parser.error("--max-feedback-joint-speed-deg-s must be positive")
+    if (
+        args.swing_world_z_max_correction_release_speed_mps is not None
+        and args.swing_world_z_max_correction_release_speed_mps <= 0.0
+    ):
+        parser.error(
+            "--swing-world-z-max-correction-release-speed-mps must be positive"
+        )
+    if (
+        args.swing_world_z_max_correction_release_speed_mps is not None
+        and args.swing_world_z_start is None
+    ):
+        parser.error(
+            "--swing-world-z-max-correction-release-speed-mps requires "
+            "swing-world-Z"
+        )
     if args.lateral_balance_start is not None:
         if min(
             args.lateral_balance_start, args.lateral_balance_end,
@@ -267,6 +299,8 @@ def parse_args():
         args.touchdown_right_fz_threshold,
         args.touchdown_confirm_s,
         args.touchdown_left_feedback_ramp_out,
+        args.touchdown_z_arrest_threshold_n,
+        args.touchdown_z_arrest_confirm_s,
     )
     if not all(math.isfinite(value) for value in touchdown_numeric):
         parser.error("touchdown numeric arguments must be finite")
@@ -276,6 +310,25 @@ def parse_args():
         parser.error("--touchdown-confirm-s must be non-negative")
     if args.touchdown_left_feedback_ramp_out < 0.0:
         parser.error("--touchdown-left-feedback-ramp-out must be non-negative")
+    if args.touchdown_z_arrest_threshold_n <= 0.0:
+        parser.error("--touchdown-z-arrest-threshold-n must be positive")
+    if args.touchdown_z_arrest_confirm_s < 0.0:
+        parser.error("--touchdown-z-arrest-confirm-s must be non-negative")
+    if args.touchdown_z_arrest and args.touchdown_support_hold:
+        parser.error(
+            "--touchdown-z-arrest and --touchdown-support-hold are mutually "
+            "exclusive"
+        )
+    if args.touchdown_z_arrest and args.swing_world_z_start is None:
+        parser.error("--touchdown-z-arrest requires swing-world-Z")
+    if (
+        args.touchdown_z_arrest
+        and args.swing_world_z_max_correction_release_speed_mps is None
+    ):
+        parser.error(
+            "--touchdown-z-arrest requires correction release speed for "
+            "continuous false-contact recovery"
+        )
     if args.touchdown_support_hold and args.swing_world_z_start is None:
         parser.error(
             "--touchdown-support-hold requires the right swing-world-Z options "
@@ -359,18 +412,22 @@ RIGHT_JOINT_NAMES = tuple(
 
 
 class TouchdownMeasurements:
-    """Read right contact force and measured leg joints for touchdown latch."""
+    """Read right contact force and optional measured touchdown joints."""
 
-    def __init__(self, contact_topic, joint_state_topic):
+    def __init__(self, contact_topic, joint_state_topic,
+                 require_joint_state=True):
         self.lock = threading.Lock()
         self.right_fz = math.nan
         self.contact_sequence = 0
         self.joint_positions = {}
         self.node = Node()
-        subscriptions = (
+        subscriptions = [
             self.node.subscribe(Contacts, contact_topic, self.on_contacts),
-            self.node.subscribe(Model, joint_state_topic, self.on_joint_state),
-        )
+        ]
+        if require_joint_state:
+            subscriptions.append(self.node.subscribe(
+                Model, joint_state_topic, self.on_joint_state,
+            ))
         if not all(subscriptions):
             raise RuntimeError("failed to subscribe to touchdown measurements")
 
@@ -546,6 +603,9 @@ class WorldFlatRightSolver:
         self.cached_base_rotation = None
         self.cached_sim_time = None
         self.cached_result = None
+        self.previous_successful_correction = None
+        self.correction_release_state = "NORMAL"
+        self.correction_release_limited_frame_count = 0
 
     def _can_reuse(self, frame, base_rotation, simulation_time):
         if self.cached_result is None or frame != self.cached_frame:
@@ -560,7 +620,10 @@ class WorldFlatRightSolver:
     def solve(self, frame, simulation_time, base_rotation, nominal_q,
               nominal_left_q, world_flat_beta, swing_world_z_beta,
               left_chain, support_x_offset=0.0,
-              support_pitch_correction=0.0):
+              support_pitch_correction=0.0,
+              correction_release_speed_mps=None,
+              correction_release_active=False, base_position=None,
+              touchdown_z_arrest=None):
         if self._can_reuse(frame, base_rotation, simulation_time):
             return self.cached_result
 
@@ -612,20 +675,120 @@ class WorldFlatRightSolver:
         tilt_r20_dx = base_rotation[2, 0] * relative[0]
         tilt_r21_dy = base_rotation[2, 1] * relative[1]
         z_valid = True
-        if swing_world_z_beta > 0.0:
+        correction_desired = swing_world_z_beta * (
+            desired_relative_world_z - predicted_before
+        )
+        correction_output = correction_desired
+        correction_diagnostics = {
+            "active": False,
+            "state": "NORMAL",
+            "raw": desired_relative_world_z - predicted_before,
+            "desired": correction_desired,
+            "previous": math.nan,
+            "output": correction_output,
+            "delta": math.nan,
+            "velocity": math.nan,
+            "limited": False,
+            "limited_frame_count": self.correction_release_limited_frame_count,
+        }
+        release_tail_active = (
+            correction_release_speed_mps is not None
+            and self.correction_release_state == "RELEASE_TAIL"
+            and self.previous_successful_correction is not None
+            and abs(self.previous_successful_correction)
+            > CORRECTION_RELEASE_TOLERANCE_M
+        )
+        correction_active = (
+            swing_world_z_beta > 0.0
+            or release_tail_active
+            or (
+                correction_release_active
+                and self.previous_successful_correction is not None
+                and abs(self.previous_successful_correction)
+                > CORRECTION_RELEASE_TOLERANCE_M
+            )
+        )
+        if correction_active:
             if abs(base_rotation[2, 2]) <= 1e-6:
                 z_valid = False
                 print(
                     f"[WARNING] swing world-Z R22 too small at frame {frame}; "
                     "using nominal Z"
                 )
-            else:
+            elif correction_release_speed_mps is None:
                 compensated_z = left_position[2] + (
                     desired_relative_world_z - tilt_r20_dx - tilt_r21_dy
                 ) / base_rotation[2, 2]
                 target[2, 3] = right_position[2] + swing_world_z_beta * (
                     compensated_z - right_position[2]
                 )
+            else:
+                previous = self.previous_successful_correction
+                release_limited = (
+                    previous is not None
+                    and (correction_release_active or release_tail_active)
+                    and abs(correction_desired) < abs(previous) - 1e-15
+                )
+                if release_limited:
+                    max_delta = correction_release_speed_mps * self.dt
+                    correction_output = max(
+                        previous - max_delta,
+                        min(previous + max_delta, correction_desired),
+                    )
+                target[2, 3] = (
+                    right_position[2]
+                    + correction_output / base_rotation[2, 2]
+                )
+                correction_diagnostics = {
+                    "active": release_limited,
+                    "state": (
+                        "RELEASE_TAIL"
+                        if swing_world_z_beta <= 0.0
+                        and abs(correction_output)
+                        > CORRECTION_RELEASE_TOLERANCE_M
+                        else "NORMAL"
+                    ),
+                    "raw": desired_relative_world_z - predicted_before,
+                    "desired": correction_desired,
+                    "previous": math.nan if previous is None else previous,
+                    "output": correction_output,
+                    "delta": (
+                        math.nan if previous is None
+                        else correction_output - previous
+                    ),
+                    "velocity": (
+                        math.nan if previous is None
+                        else (correction_output - previous) / self.dt
+                    ),
+                    "limited": release_limited and abs(
+                        correction_output - correction_desired
+                    ) > 1e-12,
+                    "limited_frame_count": (
+                        self.correction_release_limited_frame_count
+                    ),
+                }
+        arrest_diagnostics = None
+        if touchdown_z_arrest is not None:
+            if base_position is None:
+                raise RuntimeError("touchdown Z arrest requires base position")
+            if abs(base_rotation[2, 2]) <= 1e-6:
+                z_valid = False
+                print(
+                    f"[WARNING] touchdown Z arrest R22 too small at frame "
+                    f"{frame}; using the air target"
+                )
+            else:
+                air_world_z = (
+                    base_position[2] + (base_rotation @ target[:3, 3])[2]
+                )
+                arrest_diagnostics = touchdown_z_arrest.propose(air_world_z)
+                target_world_z = arrest_diagnostics["target_world_z"]
+                if arrest_diagnostics["blocked"] > 0.0:
+                    target[2, 3] = (
+                        target_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
         target_relative = target[:3, 3] - left_position
         predicted_after_target = (base_rotation @ target_relative)[2]
 
@@ -697,6 +860,31 @@ class WorldFlatRightSolver:
         ).as_euler("xyz")[1]
         result["world_flat_beta"] = world_flat_beta
         result["swing_world_z_beta"] = swing_world_z_beta
+        if valid and correction_release_speed_mps is not None and z_valid:
+            if correction_diagnostics["limited"]:
+                self.correction_release_limited_frame_count += 1
+            correction_diagnostics["limited_frame_count"] = (
+                self.correction_release_limited_frame_count
+            )
+            if (
+                swing_world_z_beta <= 0.0
+                and abs(correction_output)
+                <= CORRECTION_RELEASE_TOLERANCE_M
+            ):
+                correction_output = 0.0
+                self.previous_successful_correction = None
+                self.correction_release_state = "NORMAL"
+                correction_diagnostics["output"] = 0.0
+                correction_diagnostics["state"] = "NORMAL"
+            else:
+                self.previous_successful_correction = correction_output
+                self.correction_release_state = correction_diagnostics["state"]
+        result["correction_release"] = correction_diagnostics
+        if valid and arrest_diagnostics is not None:
+            touchdown_z_arrest.commit_successful_target(
+                arrest_diagnostics["target_world_z"]
+            )
+        result["touchdown_z_arrest"] = arrest_diagnostics
         self._cache(frame, simulation_time, base_rotation, result)
         return result
 
@@ -744,6 +932,133 @@ class WorldFlatRightSolver:
         self.cached_base_rotation = base_rotation.copy()
         self.cached_sim_time = simulation_time
         self.cached_result = result
+
+
+class TouchdownZArrest:
+    """Block only additional downward RIGHT world-Z motion after contact."""
+
+    def __init__(self, threshold_n, confirm_duration, arm_trajectory_time,
+                 recovery_speed_mps, dt):
+        self.threshold_n = threshold_n
+        self.confirm_duration = confirm_duration
+        self.arm_trajectory_time = arm_trajectory_time
+        self.recovery_speed_mps = recovery_speed_mps
+        self.dt = dt
+        self.state = "SWING"
+        self.unloaded_once = False
+        self.last_contact_sequence = None
+        self.candidate_started_at = None
+        self.first_crossing_time = math.nan
+        self.confirmed_time = math.nan
+        self.hold_world_z = None
+        self.previous_successful_world_z = None
+        self.false_contact_count = 0
+        self.pending_recovery_hold = None
+        self.pending_recovery_complete = False
+
+    @property
+    def active(self):
+        return self.state in (
+            "FIRST_CONTACT_CANDIDATE", "TOUCHDOWN_CONFIRMED",
+            "FALSE_CONTACT_RECOVERY",
+        )
+
+    def update_contact(self, sim_time, trajectory_time, right_fz,
+                       contact_sequence):
+        if contact_sequence == self.last_contact_sequence:
+            return
+        self.last_contact_sequence = contact_sequence
+        if trajectory_time + 1e-12 < self.arm_trajectory_time:
+            return
+        if math.isfinite(right_fz) and right_fz < self.threshold_n:
+            self.unloaded_once = True
+            if self.state == "FIRST_CONTACT_CANDIDATE":
+                self.state = "FALSE_CONTACT_RECOVERY"
+                self.candidate_started_at = None
+                self.false_contact_count += 1
+            return
+        if not self.unloaded_once or not math.isfinite(right_fz):
+            return
+        if right_fz < self.threshold_n:
+            return
+        if self.state in ("SWING", "FALSE_CONTACT_RECOVERY"):
+            if self.previous_successful_world_z is None:
+                return
+            self.state = "FIRST_CONTACT_CANDIDATE"
+            self.candidate_started_at = sim_time
+            self.first_crossing_time = trajectory_time
+            self.hold_world_z = self.previous_successful_world_z
+            return
+        if (
+            self.state == "FIRST_CONTACT_CANDIDATE"
+            and sim_time - self.candidate_started_at + 1e-12
+            >= self.confirm_duration
+        ):
+            self.state = "TOUCHDOWN_CONFIRMED"
+            self.confirmed_time = trajectory_time
+
+    def propose(self, air_world_z):
+        self.pending_recovery_hold = None
+        self.pending_recovery_complete = False
+        if self.state in (
+            "FIRST_CONTACT_CANDIDATE", "TOUCHDOWN_CONFIRMED",
+        ):
+            target = max(air_world_z, self.hold_world_z)
+        elif self.state == "FALSE_CONTACT_RECOVERY":
+            max_delta = self.recovery_speed_mps * self.dt
+            proposed_hold = max(
+                self.hold_world_z - max_delta,
+                min(self.hold_world_z + max_delta, air_world_z),
+            )
+            target = max(air_world_z, proposed_hold)
+            self.pending_recovery_hold = proposed_hold
+            self.pending_recovery_complete = (
+                abs(target - air_world_z) <= CORRECTION_RELEASE_TOLERANCE_M
+            )
+        else:
+            target = air_world_z
+        return {
+            "state": self.state,
+            "active": self.active,
+            "air_world_z": air_world_z,
+            "target_world_z": target,
+            "blocked": max(0.0, target - air_world_z),
+            "hold_world_z": (
+                math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+        }
+
+    def commit_successful_target(self, target_world_z):
+        self.previous_successful_world_z = target_world_z
+        if self.state == "FALSE_CONTACT_RECOVERY":
+            if self.pending_recovery_hold is not None:
+                self.hold_world_z = self.pending_recovery_hold
+            if self.pending_recovery_complete:
+                self.state = "SWING"
+                self.hold_world_z = None
+        self.pending_recovery_hold = None
+        self.pending_recovery_complete = False
+
+    def diagnostics(self, right_fz, solve_result):
+        target = (
+            None if solve_result is None
+            else solve_result.get("touchdown_z_arrest")
+        ) or {}
+        return {
+            "state": self.state,
+            "active": self.active,
+            "right_fz": right_fz,
+            "unloaded_once": self.unloaded_once,
+            "first_crossing_time": self.first_crossing_time,
+            "confirmed_time": self.confirmed_time,
+            "hold_world_z": (
+                math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+            "air_world_z": target.get("air_world_z", math.nan),
+            "target_world_z": target.get("target_world_z", math.nan),
+            "blocked": target.get("blocked", 0.0),
+            "false_contact_count": self.false_contact_count,
+        }
 
 
 class RightSupportHold:
@@ -932,6 +1247,26 @@ def log_columns():
             "base_roll", "base_pitch", "base_yaw",
             "world_flat_active", "world_flat_solver_success",
             "swing_world_z_active", "swing_world_z_solver_success",
+            "swing_world_z_correction_release_limiter_active",
+            "swing_world_z_correction_release_state",
+            "right_world_z_raw_correction_m",
+            "right_world_z_desired_correction_m",
+            "right_world_z_previous_correction_m",
+            "right_world_z_output_correction_m",
+            "right_world_z_correction_delta_m",
+            "right_world_z_correction_velocity_mps",
+            "right_world_z_correction_release_limited",
+            "right_world_z_correction_release_limited_frame_count",
+            "touchdown_z_arrest_state", "touchdown_z_arrest_active",
+            "touchdown_z_arrest_right_contact_fz",
+            "touchdown_z_arrest_unloaded_once",
+            "touchdown_z_arrest_first_crossing_time",
+            "touchdown_z_arrest_confirmed_time",
+            "touchdown_z_arrest_hold_world_z_m",
+            "right_air_world_z_desired_m",
+            "right_touchdown_world_z_target_m",
+            "right_world_z_downward_blocked_m",
+            "touchdown_z_arrest_false_contact_count",
             "right_nominal_pos_err_mm",
             "right_world_ori_err_before_deg", "right_world_ori_err_after_deg",
             "right_ik_pos_err_mm", "right_ik_ori_err_deg",
@@ -1001,7 +1336,7 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               max_delta_deg, max_velocity_deg_s, rate_limit_diagnostics=None,
               left_solve_result=None, left_rate_diagnostics=None,
               lateral_diagnostics=None, touchdown_diagnostics=None,
-              pitch_diagnostics=None):
+              pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None):
     desired_rpy = (
         np.full(3, math.nan) if solve_result is None
         else solve_result["desired_rpy"]
@@ -1047,6 +1382,79 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "max_joint_delta_deg": finite_text(max_delta_deg),
         "max_joint_velocity_deg_s": finite_text(max_velocity_deg_s),
     }
+    correction_release = (
+        None if solve_result is None
+        else solve_result.get("correction_release")
+    ) or {
+        "active": False,
+        "state": "NORMAL",
+        "raw": math.nan,
+        "desired": math.nan,
+        "previous": math.nan,
+        "output": math.nan,
+        "delta": math.nan,
+        "velocity": math.nan,
+        "limited": False,
+        "limited_frame_count": 0,
+    }
+    row.update({
+        "swing_world_z_correction_release_limiter_active": int(
+            correction_release["active"]
+        ),
+        "swing_world_z_correction_release_state": correction_release["state"],
+        "right_world_z_raw_correction_m": finite_text(
+            correction_release["raw"]
+        ),
+        "right_world_z_desired_correction_m": finite_text(
+            correction_release["desired"]
+        ),
+        "right_world_z_previous_correction_m": finite_text(
+            correction_release["previous"]
+        ),
+        "right_world_z_output_correction_m": finite_text(
+            correction_release["output"]
+        ),
+        "right_world_z_correction_delta_m": finite_text(
+            correction_release["delta"]
+        ),
+        "right_world_z_correction_velocity_mps": finite_text(
+            correction_release["velocity"]
+        ),
+        "right_world_z_correction_release_limited": int(
+            correction_release["limited"]
+        ),
+        "right_world_z_correction_release_limited_frame_count": (
+            correction_release["limited_frame_count"]
+        ),
+    })
+    arrest = touchdown_z_arrest_diagnostics or {
+        "state": "DISABLED", "active": False, "right_fz": math.nan,
+        "unloaded_once": False, "first_crossing_time": math.nan,
+        "confirmed_time": math.nan, "hold_world_z": math.nan,
+        "air_world_z": math.nan, "target_world_z": math.nan,
+        "blocked": 0.0, "false_contact_count": 0,
+    }
+    row.update({
+        "touchdown_z_arrest_state": arrest["state"],
+        "touchdown_z_arrest_active": int(arrest["active"]),
+        "touchdown_z_arrest_right_contact_fz": finite_text(arrest["right_fz"]),
+        "touchdown_z_arrest_unloaded_once": int(arrest["unloaded_once"]),
+        "touchdown_z_arrest_first_crossing_time": finite_text(
+            arrest["first_crossing_time"]
+        ),
+        "touchdown_z_arrest_confirmed_time": finite_text(
+            arrest["confirmed_time"]
+        ),
+        "touchdown_z_arrest_hold_world_z_m": finite_text(
+            arrest["hold_world_z"]
+        ),
+        "right_air_world_z_desired_m": finite_text(arrest["air_world_z"]),
+        "right_touchdown_world_z_target_m": finite_text(
+            arrest["target_world_z"]
+        ),
+        "right_world_z_downward_blocked_m": finite_text(arrest["blocked"]),
+        "touchdown_z_arrest_false_contact_count": arrest["false_contact_count"],
+    })
     rate_limit_diagnostics = rate_limit_diagnostics or {
         "active": False,
         "limited_joint_count": 0,
@@ -1367,6 +1775,17 @@ def main():
             f"{args.swing_world_z_ramp_out:.3f} sim-s"
         )
     print(
+        "swing-world-Z-max-correction-release-speed="
+        + (
+            "disabled"
+            if args.swing_world_z_max_correction_release_speed_mps is None
+            else (
+                f"{args.swing_world_z_max_correction_release_speed_mps:.3f} "
+                "m/s"
+            )
+        )
+    )
+    print(
         "max-feedback-joint-speed="
         + (
             "disabled"
@@ -1385,6 +1804,14 @@ def main():
         )
     else:
         print("touchdown-support-hold=disabled")
+    if args.touchdown_z_arrest:
+        print(
+            "touchdown-Z-arrest=enabled "
+            f"Fz>={args.touchdown_z_arrest_threshold_n:.3f} N "
+            f"confirm={args.touchdown_z_arrest_confirm_s:.3f} sim-s"
+        )
+    else:
+        print("touchdown-Z-arrest=disabled")
     print(f"frame0 Candidate B exact={'YES' if frame_zero_exact else 'NO'}")
     print(f"nominal SDF FK finite={'YES' if nominal_poses_finite else 'NO'}")
     if not frame_zero_exact or not nominal_poses_finite:
@@ -1402,8 +1829,9 @@ def main():
         TouchdownMeasurements(
             args.touchdown_right_contact_topic,
             args.touchdown_leg_joint_state_topic,
+            require_joint_state=args.touchdown_support_hold,
         )
-        if args.touchdown_support_hold else None
+        if args.touchdown_support_hold or args.touchdown_z_arrest else None
     )
 
     with args.command_log.open("w", newline="", encoding="utf-8") as stream:
@@ -1450,6 +1878,16 @@ def main():
                 args.touchdown_left_feedback_ramp_out,
             )
             if args.touchdown_support_hold else None
+        )
+        touchdown_z_arrest = (
+            TouchdownZArrest(
+                args.touchdown_z_arrest_threshold_n,
+                args.touchdown_z_arrest_confirm_s,
+                args.swing_world_z_start,
+                args.swing_world_z_max_correction_release_speed_mps,
+                args.dt,
+            )
+            if args.touchdown_z_arrest else None
         )
         safety = CommandSafetyMonitor()
         safety.check(targets[0], start_sim_time)
@@ -1598,11 +2036,17 @@ def main():
                     (
                         right_fz, contact_sequence, measured_right_q,
                     ) = touchdown_measurements.snapshot()
-                    touchdown_detected_now = touchdown_hold.update(
-                        sim_time, trajectory_time, right_fz, contact_sequence,
-                        measured_right_q,
-                        base_rotation, base_position, lateral_offset,
-                    )
+                    if touchdown_hold is not None:
+                        touchdown_detected_now = touchdown_hold.update(
+                            sim_time, trajectory_time, right_fz,
+                            contact_sequence, measured_right_q,
+                            base_rotation, base_position, lateral_offset,
+                        )
+                    if touchdown_z_arrest is not None:
+                        touchdown_z_arrest.update_contact(
+                            sim_time, trajectory_time, right_fz,
+                            contact_sequence,
+                        )
                 left_handoff_beta = 1.0
                 left_offset_before_handoff = math.nan
                 left_offset_after_handoff = math.nan
@@ -1648,13 +2092,26 @@ def main():
                     feedback_release_pending["RL"] = True
                     world_flat_active = left_world_beta > 0.0
                     swing_world_z_active = False
-                elif right_world_beta > 0.0 or swing_world_z_active:
+                elif (
+                    right_world_beta > 0.0
+                    or swing_world_z_active
+                    or right_solver.correction_release_state == "RELEASE_TAIL"
+                ):
                     solve_result = right_solver.solve(
                         next_frame, sim_time, base_rotation,
                         leg_vector(nominal, "RL"),
                         leg_vector(nominal, "LL"),
                         right_world_beta, swing_world_z_beta,
                         chains["left"],
+                        correction_release_speed_mps=(
+                            args.swing_world_z_max_correction_release_speed_mps
+                        ),
+                        correction_release_active=(
+                            args.swing_world_z_end is not None
+                            and trajectory_time > args.swing_world_z_end
+                        ),
+                        base_position=base_position,
+                        touchdown_z_arrest=touchdown_z_arrest,
                     )
                     requested_q = solve_result["q"]
                     published_q = requested_q
@@ -1807,6 +2264,12 @@ def main():
                         "left_offset_after": left_offset_after_handoff,
                     },
                     pitch_diagnostics,
+                    (
+                        None if touchdown_z_arrest is None
+                        else touchdown_z_arrest.diagnostics(
+                            right_fz, solve_result
+                        )
+                    ),
                 )
                 stream.flush()
                 if touchdown_detected_now:
@@ -1880,6 +2343,12 @@ def main():
                         ),
                         "left_offset_after": 0.0,
                     },
+                    touchdown_z_arrest_diagnostics=(
+                        None if touchdown_z_arrest is None
+                        else touchdown_z_arrest.diagnostics(
+                            math.nan, solve_result
+                        )
+                    ),
                 )
                 stream.flush()
                 publish_index += 1
