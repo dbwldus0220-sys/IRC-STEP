@@ -115,6 +115,17 @@ def parse_args():
         "--max-feedback-joint-speed-deg-s", type=float,
         help="optional per-leg feedback command rate limit",
     )
+    parser.add_argument(
+        "--right-swing-lateral-scale", type=float,
+        help=(
+            "optional scale in (0, 1] for RIGHT nominal base-frame X "
+            "motion after its reference time"
+        ),
+    )
+    parser.add_argument(
+        "--right-swing-lateral-reference-time", type=float,
+        help="trajectory time defining the unscaled RIGHT X reference",
+    )
     parser.add_argument("--lateral-balance-planner-csv", type=Path)
     parser.add_argument("--lateral-balance-start", type=float)
     parser.add_argument("--lateral-balance-end", type=float)
@@ -161,6 +172,37 @@ def parse_args():
     parser.add_argument(
         "--touchdown-z-arrest-confirm-s", type=float, default=0.02,
     )
+    parser.add_argument(
+        "--left-support-z-hold-until-right-confirmed", action="store_true",
+        help="hold only LEFT sole world-Z until stable RIGHT touchdown",
+    )
+    parser.add_argument(
+        "--left-support-z-release-s", type=float, default=0.08,
+        help="smooth LEFT world-Z release duration after confirmation",
+    )
+    parser.add_argument(
+        "--left-support-z-hold-through-replay", action="store_true",
+        help="keep the latched LEFT sole world-Z through REPLAY",
+    )
+    parser.add_argument(
+        "--fore-aft-sign-test-correction-deg", type=float,
+        help=(
+            "fixed RIGHT support-foot world-X orientation correction after "
+            "stable touchdown (limited to +/-0.25 deg)"
+        ),
+    )
+    parser.add_argument(
+        "--fore-aft-sign-test-ramp-in-s", type=float, default=0.05,
+        help="smoothstep ramp-in after stable RIGHT touchdown",
+    )
+    parser.add_argument("--right-touchdown-flatten-correction-deg", type=float)
+    parser.add_argument("--right-touchdown-flatten-start", type=float)
+    parser.add_argument(
+        "--right-touchdown-flatten-ramp-in-s", type=float, default=0.05,
+    )
+    parser.add_argument(
+        "--right-touchdown-flatten-ramp-out-s", type=float, default=0.08,
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     swing_values = (
@@ -189,6 +231,44 @@ def parse_args():
         ))
     if args.max_feedback_joint_speed_deg_s is not None:
         numeric.append(args.max_feedback_joint_speed_deg_s)
+    lateral_scale_values = (
+        args.right_swing_lateral_scale,
+        args.right_swing_lateral_reference_time,
+    )
+    if any(value is not None for value in lateral_scale_values) and not all(
+        value is not None for value in lateral_scale_values
+    ):
+        parser.error(
+            "--right-swing-lateral-scale and "
+            "--right-swing-lateral-reference-time must be specified together"
+        )
+    if args.right_swing_lateral_scale is not None:
+        if not all(math.isfinite(value) for value in lateral_scale_values):
+            parser.error("RIGHT swing lateral arguments must be finite")
+        if not 0.0 < args.right_swing_lateral_scale <= 1.0:
+            parser.error("--right-swing-lateral-scale must be in (0, 1]")
+        if args.right_swing_lateral_reference_time < 0.0:
+            parser.error(
+                "--right-swing-lateral-reference-time must be non-negative"
+            )
+        if args.dt <= 0.0:
+            parser.error("--dt must be positive")
+        reference_frame = round(
+            args.right_swing_lateral_reference_time / args.dt
+        )
+        if not math.isclose(
+            reference_frame * args.dt,
+            args.right_swing_lateral_reference_time,
+            abs_tol=1e-12,
+        ):
+            parser.error(
+                "--right-swing-lateral-reference-time must align with --dt"
+            )
+        if args.right_swing_lateral_reference_time > args.replay_end:
+            parser.error(
+                "--right-swing-lateral-reference-time must not exceed "
+                "--replay-end"
+            )
     if args.swing_world_z_max_correction_release_speed_mps is not None:
         numeric.append(args.swing_world_z_max_correction_release_speed_mps)
     lateral_values = (
@@ -301,6 +381,7 @@ def parse_args():
         args.touchdown_left_feedback_ramp_out,
         args.touchdown_z_arrest_threshold_n,
         args.touchdown_z_arrest_confirm_s,
+        args.left_support_z_release_s,
     )
     if not all(math.isfinite(value) for value in touchdown_numeric):
         parser.error("touchdown numeric arguments must be finite")
@@ -314,6 +395,68 @@ def parse_args():
         parser.error("--touchdown-z-arrest-threshold-n must be positive")
     if args.touchdown_z_arrest_confirm_s < 0.0:
         parser.error("--touchdown-z-arrest-confirm-s must be non-negative")
+    if not 0.02 <= args.left_support_z_release_s <= 0.20:
+        parser.error("--left-support-z-release-s must be in [0.02, 0.20]")
+    if not math.isfinite(args.fore_aft_sign_test_ramp_in_s):
+        parser.error("--fore-aft-sign-test-ramp-in-s must be finite")
+    if args.fore_aft_sign_test_ramp_in_s < 0.0:
+        parser.error("--fore-aft-sign-test-ramp-in-s must be non-negative")
+    if args.fore_aft_sign_test_correction_deg is not None:
+        if not math.isfinite(args.fore_aft_sign_test_correction_deg):
+            parser.error(
+                "--fore-aft-sign-test-correction-deg must be finite"
+            )
+        if abs(args.fore_aft_sign_test_correction_deg) > 0.25:
+            parser.error(
+                "--fore-aft-sign-test-correction-deg must be in "
+                "[-0.25, +0.25]"
+            )
+        if (
+            abs(args.fore_aft_sign_test_correction_deg) > 0.0
+            and not args.touchdown_z_arrest
+        ):
+            parser.error(
+                "--fore-aft-sign-test-correction-deg requires "
+                "--touchdown-z-arrest for stable-support confirmation"
+            )
+    flatten_numeric = (
+        args.right_touchdown_flatten_ramp_in_s,
+        args.right_touchdown_flatten_ramp_out_s,
+    )
+    if not all(math.isfinite(value) for value in flatten_numeric):
+        parser.error("RIGHT touchdown flatten ramp arguments must be finite")
+    if min(flatten_numeric) < 0.0:
+        parser.error("RIGHT touchdown flatten ramps must be non-negative")
+    flatten_correction = args.right_touchdown_flatten_correction_deg
+    flatten_enabled = flatten_correction is not None and flatten_correction != 0.0
+    if flatten_correction is not None:
+        if not math.isfinite(flatten_correction):
+            parser.error("RIGHT touchdown flatten correction must be finite")
+        if not -1.5 <= flatten_correction <= 0.0:
+            parser.error(
+                "--right-touchdown-flatten-correction-deg must be in [-1.5, 0]"
+            )
+    if flatten_enabled:
+        if args.right_touchdown_flatten_start is None:
+            parser.error(
+                "RIGHT touchdown flatten correction requires its start time"
+            )
+        if not math.isfinite(args.right_touchdown_flatten_start):
+            parser.error("RIGHT touchdown flatten start must be finite")
+        if args.right_touchdown_flatten_start < 0.0:
+            parser.error("RIGHT touchdown flatten start must be non-negative")
+        if not args.touchdown_z_arrest:
+            parser.error(
+                "RIGHT touchdown flatten correction requires --touchdown-z-arrest"
+            )
+        if (
+            args.fore_aft_sign_test_correction_deg is not None
+            and args.fore_aft_sign_test_correction_deg != 0.0
+        ):
+            parser.error(
+                "RIGHT touchdown flatten correction and fore-aft sign-test "
+                "cannot both be nonzero"
+            )
     if args.touchdown_z_arrest and args.touchdown_support_hold:
         parser.error(
             "--touchdown-z-arrest and --touchdown-support-hold are mutually "
@@ -321,6 +464,22 @@ def parse_args():
         )
     if args.touchdown_z_arrest and args.swing_world_z_start is None:
         parser.error("--touchdown-z-arrest requires swing-world-Z")
+    if (
+        args.left_support_z_hold_until_right_confirmed
+        and not args.touchdown_z_arrest
+    ):
+        parser.error(
+            "--left-support-z-hold-until-right-confirmed requires "
+            "--touchdown-z-arrest"
+        )
+    if (
+        args.left_support_z_hold_through_replay
+        and not args.left_support_z_hold_until_right_confirmed
+    ):
+        parser.error(
+            "--left-support-z-hold-through-replay requires "
+            "--left-support-z-hold-until-right-confirmed"
+        )
     if (
         args.touchdown_z_arrest
         and args.swing_world_z_max_correction_release_speed_mps is None
@@ -566,6 +725,58 @@ def feedback_beta(phase, trajectory_time, start, end, ramp_in, ramp_out):
     return 1.0 - smoothstep((trajectory_time - end) / ramp_out)
 
 
+def fore_aft_sign_test_beta(trajectory_time, confirmed_time, ramp_in):
+    if not math.isfinite(confirmed_time) or trajectory_time < confirmed_time:
+        return 0.0
+    if ramp_in <= 0.0:
+        return 1.0
+    return smoothstep((trajectory_time - confirmed_time) / ramp_in)
+
+
+def touchdown_flatten_diagnostics(trajectory_time, requested_correction,
+                                  start, ramp_in, ramp_out,
+                                  touchdown_z_arrest):
+    enabled = requested_correction != 0.0
+    activation_beta = 0.0
+    if enabled and trajectory_time >= start:
+        activation_beta = (
+            1.0 if ramp_in <= 0.0
+            else smoothstep((trajectory_time - start) / ramp_in)
+        )
+    confirmed = (
+        enabled
+        and touchdown_z_arrest.state == "TOUCHDOWN_CONFIRMED"
+        and math.isfinite(touchdown_z_arrest.confirmed_time)
+    )
+    release_beta = 0.0
+    if confirmed:
+        release_beta = (
+            1.0 if ramp_out <= 0.0
+            else smoothstep(
+                (trajectory_time - touchdown_z_arrest.confirmed_time)
+                / ramp_out
+            )
+        )
+    beta = activation_beta * (1.0 - release_beta)
+    if not enabled:
+        state = "DISABLED"
+    elif release_beta >= 1.0:
+        state = "RELEASED"
+    elif confirmed:
+        state = "RELEASING"
+    elif activation_beta >= 1.0:
+        state = "HOLDING"
+    elif activation_beta > 0.0:
+        state = "RAMP_IN"
+    else:
+        state = "WAITING"
+    return {
+        "enabled": enabled, "requested": requested_correction,
+        "beta": beta, "applied": beta * requested_correction,
+        "state": state, "release_beta": release_beta,
+    }
+
+
 def world_flat_orientation(world_reference, nominal_world_rotation):
     """Keep the flat reference tilt while following nominal world yaw."""
     reference_heading = world_reference[:2, 0]
@@ -587,7 +798,8 @@ def world_flat_orientation(world_reference, nominal_world_rotation):
 class WorldFlatRightSolver:
     def __init__(self, chain, world_reference, dt, initial_base_rotation,
                  initial_right_position, initial_left_position,
-                 leg_name="right"):
+                 leg_name="right", lateral_scale=None,
+                 lateral_reference_frame=None, lateral_reference_x=None):
         self.chain = chain
         self.leg_name = leg_name
         self.world_reference = world_reference
@@ -606,6 +818,9 @@ class WorldFlatRightSolver:
         self.previous_successful_correction = None
         self.correction_release_state = "NORMAL"
         self.correction_release_limited_frame_count = 0
+        self.lateral_scale = lateral_scale
+        self.lateral_reference_frame = lateral_reference_frame
+        self.lateral_reference_x = lateral_reference_x
 
     def _can_reuse(self, frame, base_rotation, simulation_time):
         if self.cached_result is None or frame != self.cached_frame:
@@ -621,15 +836,25 @@ class WorldFlatRightSolver:
               nominal_left_q, world_flat_beta, swing_world_z_beta,
               left_chain, support_x_offset=0.0,
               support_pitch_correction=0.0,
+              world_x_orientation_correction=0.0,
               correction_release_speed_mps=None,
               correction_release_active=False, base_position=None,
-              touchdown_z_arrest=None):
+              touchdown_z_arrest=None, support_z_hold=None,
+              support_z_trajectory_time=None):
         if self._can_reuse(frame, base_rotation, simulation_time):
             return self.cached_result
 
         nominal_pose = self.chain.forward(nominal_q)
         nominal_left_pose = left_chain.forward(nominal_left_q)
         target = nominal_pose.copy()
+        if (
+            self.lateral_scale is not None
+            and self.lateral_scale < 1.0
+            and frame >= self.lateral_reference_frame
+        ):
+            target[0, 3] = self.lateral_reference_x + self.lateral_scale * (
+                nominal_pose[0, 3] - self.lateral_reference_x
+            )
         target[0, 3] += support_x_offset
         # Pitch balance is defined about the LEFT base-frame +Y axis.  A
         # negative correction therefore pre-multiplies the nominal sole
@@ -659,6 +884,18 @@ class WorldFlatRightSolver:
                 ).as_matrix()
             )
             world_target_rotation = base_rotation @ target[:3, :3]
+        world_x_before = world_target_rotation.copy()
+        if abs(world_x_orientation_correction) > 0.0:
+            # Left multiplication applies the delta about the fixed world X
+            # axis. Convert the composed world target back to the base frame
+            # expected by the leg IK without changing target translation.
+            world_target_rotation = (
+                Rotation.from_rotvec(
+                    [world_x_orientation_correction, 0.0, 0.0]
+                ).as_matrix()
+                @ world_target_rotation
+            )
+            target[:3, :3] = base_rotation.T @ world_target_rotation
         before_error = rotation_error_angle(
             world_target_rotation, nominal_world_rotation,
         )
@@ -789,6 +1026,26 @@ class WorldFlatRightSolver:
                         - base_rotation[2, 0] * target[0, 3]
                         - base_rotation[2, 1] * target[1, 3]
                     ) / base_rotation[2, 2]
+        support_z_diagnostics = None
+        if support_z_hold is not None:
+            if base_position is None:
+                raise RuntimeError("support Z hold requires base position")
+            nominal_world_z = (
+                base_position[2] + (base_rotation @ target[:3, 3])[2]
+            )
+            support_z_diagnostics = support_z_hold.propose(
+                support_z_trajectory_time, nominal_world_z,
+            )
+            if support_z_diagnostics["active"]:
+                final_world_z = support_z_diagnostics["final_world_z"]
+                if abs(base_rotation[2, 2]) <= 1e-6:
+                    z_valid = False
+                else:
+                    target[2, 3] = (
+                        final_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
         target_relative = target[:3, 3] - left_position
         predicted_after_target = (base_rotation @ target_relative)[2]
 
@@ -798,6 +1055,13 @@ class WorldFlatRightSolver:
                 base_rotation, world_target_rotation, before_error,
                 desired_relative_world_z, predicted_before,
                 predicted_before, tilt_r20_dx, tilt_r21_dy,
+            )
+            result["fore_aft_world_x_correction"] = (
+                world_x_orientation_correction
+            )
+            result["world_x_orientation_before"] = world_x_before
+            result["world_x_orientation_after"] = (
+                world_target_rotation.copy()
             )
             self._cache(frame, simulation_time, base_rotation, result)
             return result
@@ -852,6 +1116,11 @@ class WorldFlatRightSolver:
             valid and abs(support_pitch_correction) > 0.0
         )
         result["pitch_target_delta"] = support_pitch_correction
+        result["fore_aft_world_x_correction"] = (
+            world_x_orientation_correction
+        )
+        result["world_x_orientation_before"] = world_x_before
+        result["world_x_orientation_after"] = world_target_rotation.copy()
         result["nominal_base_pitch"] = Rotation.from_matrix(
             nominal_pose[:3, :3]
         ).as_euler("xyz")[1]
@@ -884,7 +1153,12 @@ class WorldFlatRightSolver:
             touchdown_z_arrest.commit_successful_target(
                 arrest_diagnostics["target_world_z"]
             )
+        if valid and support_z_diagnostics is not None:
+            support_z_hold.commit_successful_target(
+                support_z_diagnostics["final_world_z"]
+            )
         result["touchdown_z_arrest"] = arrest_diagnostics
+        result["left_support_z_hold"] = support_z_diagnostics
         self._cache(frame, simulation_time, base_rotation, result)
         return result
 
@@ -932,6 +1206,68 @@ class WorldFlatRightSolver:
         self.cached_base_rotation = base_rotation.copy()
         self.cached_sim_time = simulation_time
         self.cached_result = result
+
+
+class LeftSupportZHold:
+    """Hold one latched LEFT sole world-Z through stable RIGHT touchdown."""
+
+    def __init__(self, release_duration, touchdown_z_arrest,
+                 hold_through_replay=False):
+        self.release_duration = release_duration
+        self.touchdown_z_arrest = touchdown_z_arrest
+        self.hold_through_replay = hold_through_replay
+        self.hold_world_z = None
+        self.hold_start_time = math.nan
+        self.release_start_time = math.nan
+        self.previous_final_world_z = None
+
+    def propose(self, trajectory_time, nominal_world_z):
+        touchdown_z_arrest = self.touchdown_z_arrest
+        if self.hold_world_z is None and touchdown_z_arrest.unloaded_once:
+            self.hold_world_z = (
+                nominal_world_z
+                if self.previous_final_world_z is None
+                else self.previous_final_world_z
+            )
+            self.hold_start_time = trajectory_time
+        confirmed = (
+            touchdown_z_arrest.state == "TOUCHDOWN_CONFIRMED"
+            and math.isfinite(touchdown_z_arrest.confirmed_time)
+        )
+        if (
+            confirmed and not self.hold_through_replay
+            and not math.isfinite(self.release_start_time)
+        ):
+            self.release_start_time = touchdown_z_arrest.confirmed_time
+        beta = 0.0
+        release_active = False
+        active = self.hold_world_z is not None
+        if active and math.isfinite(self.release_start_time):
+            beta = smoothstep(
+                (trajectory_time - self.release_start_time)
+                / self.release_duration
+            )
+            release_active = beta < 1.0
+        final_world_z = (
+            nominal_world_z if not active
+            else (1.0 - beta) * self.hold_world_z + beta * nominal_world_z
+        )
+        return {
+            "enabled": True,
+            "active": active and beta < 1.0,
+            "hold_world_z": (
+                math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+            "release_active": release_active,
+            "release_beta": beta,
+            "nominal_world_z": nominal_world_z,
+            "final_world_z": final_world_z,
+            "hold_start_time": self.hold_start_time,
+            "release_start_time": self.release_start_time,
+        }
+
+    def commit_successful_target(self, final_world_z):
+        self.previous_final_world_z = final_world_z
 
 
 class TouchdownZArrest:
@@ -1267,6 +1603,12 @@ def log_columns():
             "right_touchdown_world_z_target_m",
             "right_world_z_downward_blocked_m",
             "touchdown_z_arrest_false_contact_count",
+            "left_support_z_hold_enabled", "left_support_z_hold_active",
+            "left_support_z_hold_world_z",
+            "left_support_z_release_active", "left_support_z_release_beta",
+            "left_support_z_nominal_world_z", "left_support_z_final_world_z",
+            "left_support_z_hold_start_time",
+            "left_support_z_release_start_time",
             "right_nominal_pos_err_mm",
             "right_world_ori_err_before_deg", "right_world_ori_err_after_deg",
             "right_ik_pos_err_mm", "right_ik_ori_err_deg",
@@ -1322,6 +1664,21 @@ def log_columns():
             "left_pitch_balance_solver_success",
             "left_nominal_base_pitch_deg", "left_target_base_pitch_deg",
             "left_pitch_target_delta_deg",
+            "fore_aft_sign_test_enabled",
+            "fore_aft_sign_test_support_confirmed",
+            "fore_aft_sign_test_requested_deg",
+            "fore_aft_sign_test_beta",
+            "fore_aft_sign_test_applied_deg",
+            "right_target_world_x_rotation_before_deg",
+            "right_target_world_x_rotation_after_deg",
+            "right_touchdown_flatten_enabled",
+            "right_touchdown_flatten_requested_deg",
+            "right_touchdown_flatten_beta",
+            "right_touchdown_flatten_applied_deg",
+            "right_touchdown_flatten_state",
+            "right_touchdown_flatten_release_beta",
+            "right_target_world_roll_before_flatten_deg",
+            "right_target_world_roll_after_flatten_deg",
         ]
     )
 
@@ -1336,7 +1693,10 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               max_delta_deg, max_velocity_deg_s, rate_limit_diagnostics=None,
               left_solve_result=None, left_rate_diagnostics=None,
               lateral_diagnostics=None, touchdown_diagnostics=None,
-              pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None):
+              pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None,
+              fore_aft_sign_test_diagnostics=None,
+              left_support_z_diagnostics=None,
+              touchdown_flatten_diagnostics_row=None):
     desired_rpy = (
         np.full(3, math.nan) if solve_result is None
         else solve_result["desired_rpy"]
@@ -1454,6 +1814,29 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         ),
         "right_world_z_downward_blocked_m": finite_text(arrest["blocked"]),
         "touchdown_z_arrest_false_contact_count": arrest["false_contact_count"],
+    })
+    support_z = left_support_z_diagnostics or {
+        "enabled": False, "active": False, "hold_world_z": math.nan,
+        "release_active": False, "release_beta": 0.0,
+        "nominal_world_z": math.nan, "final_world_z": math.nan,
+        "hold_start_time": math.nan, "release_start_time": math.nan,
+    }
+    row.update({
+        "left_support_z_hold_enabled": int(support_z["enabled"]),
+        "left_support_z_hold_active": int(support_z["active"]),
+        "left_support_z_hold_world_z": finite_text(support_z["hold_world_z"]),
+        "left_support_z_release_active": int(support_z["release_active"]),
+        "left_support_z_release_beta": finite_text(support_z["release_beta"]),
+        "left_support_z_nominal_world_z": finite_text(
+            support_z["nominal_world_z"]
+        ),
+        "left_support_z_final_world_z": finite_text(support_z["final_world_z"]),
+        "left_support_z_hold_start_time": finite_text(
+            support_z["hold_start_time"]
+        ),
+        "left_support_z_release_start_time": finite_text(
+            support_z["release_start_time"]
+        ),
     })
     rate_limit_diagnostics = rate_limit_diagnostics or {
         "active": False,
@@ -1606,6 +1989,62 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
             else math.degrees(left_solve_result.get("pitch_target_delta", math.nan))
         ),
     })
+    fore_aft = fore_aft_sign_test_diagnostics or {
+        "enabled": False, "support_confirmed": False,
+        "requested": 0.0, "beta": 0.0, "applied": 0.0,
+    }
+    before_world_x = math.nan
+    after_world_x = math.nan
+    if solve_result is not None:
+        before_world_x = Rotation.from_matrix(
+            solve_result["world_x_orientation_before"]
+        ).as_euler("xyz")[0]
+        after_world_x = Rotation.from_matrix(
+            solve_result["world_x_orientation_after"]
+        ).as_euler("xyz")[0]
+    row.update({
+        "fore_aft_sign_test_enabled": int(fore_aft["enabled"]),
+        "fore_aft_sign_test_support_confirmed": int(
+            fore_aft["support_confirmed"]
+        ),
+        "fore_aft_sign_test_requested_deg": finite_text(
+            math.degrees(fore_aft["requested"])
+        ),
+        "fore_aft_sign_test_beta": finite_text(fore_aft["beta"]),
+        "fore_aft_sign_test_applied_deg": finite_text(
+            math.degrees(fore_aft["applied"])
+        ),
+        "right_target_world_x_rotation_before_deg": finite_text(
+            math.degrees(before_world_x)
+        ),
+        "right_target_world_x_rotation_after_deg": finite_text(
+            math.degrees(after_world_x)
+        ),
+    })
+    flatten = touchdown_flatten_diagnostics_row or {
+        "enabled": False, "requested": 0.0, "beta": 0.0,
+        "applied": 0.0, "state": "DISABLED", "release_beta": 0.0,
+    }
+    row.update({
+        "right_touchdown_flatten_enabled": int(flatten["enabled"]),
+        "right_touchdown_flatten_requested_deg": finite_text(
+            math.degrees(flatten["requested"])
+        ),
+        "right_touchdown_flatten_beta": finite_text(flatten["beta"]),
+        "right_touchdown_flatten_applied_deg": finite_text(
+            math.degrees(flatten["applied"])
+        ),
+        "right_touchdown_flatten_state": flatten["state"],
+        "right_touchdown_flatten_release_beta": finite_text(
+            flatten["release_beta"]
+        ),
+        "right_target_world_roll_before_flatten_deg": finite_text(
+            math.degrees(before_world_x)
+        ),
+        "right_target_world_roll_after_flatten_deg": finite_text(
+            math.degrees(after_world_x)
+        ),
+    })
     left_rate_diagnostics = left_rate_diagnostics or {
         "limited_joint_count": 0,
         "requested_speed_deg_s": 0.0,
@@ -1715,6 +2154,16 @@ def nominal_validation(targets, chains):
 def main():
     args = parse_args()
     targets = load_targets(args.csv)
+    right_lateral_reference_frame = None
+    right_lateral_reference_x = None
+    if args.right_swing_lateral_scale is not None:
+        right_lateral_reference_frame = round(
+            args.right_swing_lateral_reference_time / args.dt
+        )
+        if right_lateral_reference_frame >= len(targets):
+            raise RuntimeError(
+                "RIGHT swing lateral reference frame is outside the CSV"
+            )
     planner_dx = None
     planner_vx = None
     if args.lateral_balance_planner_csv is not None:
@@ -1724,6 +2173,12 @@ def main():
         if len(planner_dx) < len(targets):
             raise RuntimeError("planner CSV is shorter than nominal command CSV")
     chains = load_leg_chains(args.sdf)
+    if right_lateral_reference_frame is not None:
+        right_lateral_reference_x = chains["right"].forward(
+            leg_vector(
+                targets[right_lateral_reference_frame], "RL"
+            )
+        )[0, 3]
     frame_zero_exact, nominal_poses_finite = nominal_validation(targets, chains)
     replay_last_frame = min(
         int(math.floor(args.replay_end / args.dt + 1e-12)), len(targets) - 1,
@@ -1793,6 +2248,13 @@ def main():
             else f"{args.max_feedback_joint_speed_deg_s:.3f} deg/s"
         )
     )
+    if args.right_swing_lateral_scale is not None:
+        print(
+            "RIGHT-swing-lateral-scale="
+            f"{args.right_swing_lateral_scale:.6f} "
+            f"reference={args.right_swing_lateral_reference_time:.3f} sim-s "
+            f"reference-X={right_lateral_reference_x:.9f} m"
+        )
     if args.touchdown_support_hold:
         print(
             "touchdown-support-hold=enabled "
@@ -1812,6 +2274,40 @@ def main():
         )
     else:
         print("touchdown-Z-arrest=disabled")
+    print(
+        "LEFT-support-Z-hold="
+        f"{'enabled' if args.left_support_z_hold_until_right_confirmed else 'disabled'} "
+        f"release={args.left_support_z_release_s:.3f} sim-s "
+        f"through-replay={int(args.left_support_z_hold_through_replay)}"
+    )
+    fore_aft_requested_deg = (
+        0.0 if args.fore_aft_sign_test_correction_deg is None
+        else args.fore_aft_sign_test_correction_deg
+    )
+    fore_aft_sign_test_enabled = abs(fore_aft_requested_deg) > 0.0
+    if fore_aft_sign_test_enabled:
+        print(
+            "fore-aft-sign-test=enabled "
+            f"world-X={fore_aft_requested_deg:+.3f} deg "
+            f"ramp-in={args.fore_aft_sign_test_ramp_in_s:.3f} sim-s"
+        )
+    else:
+        print("fore-aft-sign-test=disabled")
+    touchdown_flatten_requested_deg = (
+        0.0 if args.right_touchdown_flatten_correction_deg is None
+        else args.right_touchdown_flatten_correction_deg
+    )
+    touchdown_flatten_enabled = touchdown_flatten_requested_deg != 0.0
+    if touchdown_flatten_enabled:
+        print(
+            "RIGHT-touchdown-flatten=enabled "
+            f"world-X={touchdown_flatten_requested_deg:+.3f} deg "
+            f"start={args.right_touchdown_flatten_start:.3f} sim-s "
+            f"ramp-in/out={args.right_touchdown_flatten_ramp_in_s:.3f}/"
+            f"{args.right_touchdown_flatten_ramp_out_s:.3f} sim-s"
+        )
+    else:
+        print("RIGHT-touchdown-flatten=disabled")
     print(f"frame0 Candidate B exact={'YES' if frame_zero_exact else 'NO'}")
     print(f"nominal SDF FK finite={'YES' if nominal_poses_finite else 'NO'}")
     if not frame_zero_exact or not nominal_poses_finite:
@@ -1864,6 +2360,9 @@ def main():
             args.dt, base_rotation,
             initial_right_pose[:3, 3], initial_left_pose[:3, 3],
             leg_name="right",
+            lateral_scale=args.right_swing_lateral_scale,
+            lateral_reference_frame=right_lateral_reference_frame,
+            lateral_reference_x=right_lateral_reference_x,
         )
         left_solver = WorldFlatRightSolver(
             chains["left"], base_rotation @ initial_left_pose[:3, :3],
@@ -1888,6 +2387,13 @@ def main():
                 args.dt,
             )
             if args.touchdown_z_arrest else None
+        )
+        left_support_z_hold = (
+            LeftSupportZHold(
+                args.left_support_z_release_s, touchdown_z_arrest,
+                hold_through_replay=args.left_support_z_hold_through_replay,
+            )
+            if args.left_support_z_hold_until_right_confirmed else None
         )
         safety = CommandSafetyMonitor()
         safety.check(targets[0], start_sim_time)
@@ -2047,6 +2553,39 @@ def main():
                             sim_time, trajectory_time, right_fz,
                             contact_sequence,
                         )
+                fore_aft_support_confirmed = (
+                    touchdown_z_arrest is not None
+                    and touchdown_z_arrest.state == "TOUCHDOWN_CONFIRMED"
+                    and math.isfinite(touchdown_z_arrest.confirmed_time)
+                )
+                fore_aft_beta = 0.0
+                if fore_aft_sign_test_enabled and fore_aft_support_confirmed:
+                    fore_aft_beta = fore_aft_sign_test_beta(
+                        trajectory_time,
+                        touchdown_z_arrest.confirmed_time,
+                        args.fore_aft_sign_test_ramp_in_s,
+                    )
+                fore_aft_requested = math.radians(fore_aft_requested_deg)
+                fore_aft_applied = fore_aft_beta * fore_aft_requested
+                fore_aft_diagnostics = {
+                    "enabled": fore_aft_sign_test_enabled,
+                    "support_confirmed": fore_aft_support_confirmed,
+                    "requested": fore_aft_requested,
+                    "beta": fore_aft_beta,
+                    "applied": fore_aft_applied,
+                }
+                flatten_diagnostics = touchdown_flatten_diagnostics(
+                    trajectory_time,
+                    math.radians(touchdown_flatten_requested_deg),
+                    args.right_touchdown_flatten_start,
+                    args.right_touchdown_flatten_ramp_in_s,
+                    args.right_touchdown_flatten_ramp_out_s,
+                    touchdown_z_arrest,
+                ) if touchdown_flatten_enabled else None
+                touchdown_flatten_applied = (
+                    0.0 if flatten_diagnostics is None
+                    else flatten_diagnostics["applied"]
+                )
                 left_handoff_beta = 1.0
                 left_offset_before_handoff = math.nan
                 left_offset_after_handoff = math.nan
@@ -2096,6 +2635,8 @@ def main():
                     right_world_beta > 0.0
                     or swing_world_z_active
                     or right_solver.correction_release_state == "RELEASE_TAIL"
+                    or fore_aft_sign_test_enabled
+                    or touchdown_flatten_enabled
                 ):
                     solve_result = right_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -2103,6 +2644,9 @@ def main():
                         leg_vector(nominal, "LL"),
                         right_world_beta, swing_world_z_beta,
                         chains["left"],
+                        world_x_orientation_correction=(
+                            fore_aft_applied + touchdown_flatten_applied
+                        ),
                         correction_release_speed_mps=(
                             args.swing_world_z_max_correction_release_speed_mps
                         ),
@@ -2166,7 +2710,10 @@ def main():
                         "published_speed_deg_s": math.degrees(published_speed),
                     }
 
-                if left_world_beta > 0.0 or lateral_active or pitch_active:
+                if (
+                    left_world_beta > 0.0 or lateral_active or pitch_active
+                    or left_support_z_hold is not None
+                ):
                     left_solve_result = left_solver.solve(
                         next_frame, sim_time, base_rotation,
                         leg_vector(nominal, "LL"),
@@ -2175,6 +2722,9 @@ def main():
                         chains["right"],
                         support_x_offset=lateral_offset,
                         support_pitch_correction=pitch_correction,
+                        base_position=base_position,
+                        support_z_hold=left_support_z_hold,
+                        support_z_trajectory_time=trajectory_time,
                     )
                     requested_q = left_solve_result["q"]
                     published_q = requested_q
@@ -2270,6 +2820,12 @@ def main():
                             right_fz, solve_result
                         )
                     ),
+                    fore_aft_sign_test_diagnostics=fore_aft_diagnostics,
+                    left_support_z_diagnostics=(
+                        None if left_solve_result is None
+                        else left_solve_result.get("left_support_z_hold")
+                    ),
+                    touchdown_flatten_diagnostics_row=flatten_diagnostics,
                 )
                 stream.flush()
                 if touchdown_detected_now:
