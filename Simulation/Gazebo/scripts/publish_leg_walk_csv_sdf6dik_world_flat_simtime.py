@@ -142,6 +142,20 @@ def parse_args():
     parser.add_argument("--pitch-balance-ramp-in", type=float)
     parser.add_argument("--pitch-balance-ramp-out", type=float)
     parser.add_argument(
+        "--pitch-balance-support-handoff", action="store_true",
+        help="handoff pitch balance from LEFT to RIGHT after confirmed touchdown",
+    )
+    parser.add_argument(
+        "--pitch-balance-support-handoff-ramp-s", type=float, default=0.08,
+    )
+    parser.add_argument(
+        "--pitch-balance-right-support-sign", type=int,
+        choices=(-1, 1), default=1,
+    )
+    parser.add_argument(
+        "--pitch-balance-right-max-angle-deg", type=float, default=0.5,
+    )
+    parser.add_argument(
         "--touchdown-support-hold", action="store_true",
         help="enable contact-latched right sole world-pose hold",
     )
@@ -374,6 +388,27 @@ def parse_args():
             parser.error(
                 "pitch balance cannot be combined with left world-flat; "
                 "use --world-flat-leg right"
+            )
+    handoff_numeric = (
+        args.pitch_balance_support_handoff_ramp_s,
+        args.pitch_balance_right_max_angle_deg,
+    )
+    if not all(math.isfinite(value) for value in handoff_numeric):
+        parser.error("pitch balance support handoff arguments must be finite")
+    if args.pitch_balance_support_handoff_ramp_s < 0.0:
+        parser.error(
+            "--pitch-balance-support-handoff-ramp-s must be non-negative"
+        )
+    if args.pitch_balance_right_max_angle_deg <= 0.0:
+        parser.error("--pitch-balance-right-max-angle-deg must be positive")
+    if args.pitch_balance_support_handoff:
+        if args.pitch_balance_start is None:
+            parser.error(
+                "--pitch-balance-support-handoff requires pitch balance"
+            )
+        if not args.touchdown_z_arrest:
+            parser.error(
+                "--pitch-balance-support-handoff requires --touchdown-z-arrest"
             )
     touchdown_numeric = (
         args.touchdown_right_fz_threshold,
@@ -733,6 +768,25 @@ def fore_aft_sign_test_beta(trajectory_time, confirmed_time, ramp_in):
     return smoothstep((trajectory_time - confirmed_time) / ramp_in)
 
 
+def pitch_balance_support_handoff(trajectory_time, touchdown_z_arrest,
+                                  enabled, ramp_s):
+    if not enabled:
+        return 0.0, "DISABLED"
+    if (
+        touchdown_z_arrest is None
+        or touchdown_z_arrest.state != "TOUCHDOWN_CONFIRMED"
+        or not math.isfinite(touchdown_z_arrest.confirmed_time)
+    ):
+        state = (
+            "WAITING_FOR_TOUCHDOWN"
+            if touchdown_z_arrest is None else touchdown_z_arrest.state
+        )
+        return 0.0, state
+    elapsed = trajectory_time - touchdown_z_arrest.confirmed_time
+    beta = 1.0 if ramp_s <= 0.0 else smoothstep(elapsed / ramp_s)
+    return beta, ("RIGHT_SUPPORT" if beta >= 1.0 else "HANDOFF_RAMP")
+
+
 def touchdown_flatten_diagnostics(trajectory_time, requested_correction,
                                   start, ramp_in, ramp_out,
                                   touchdown_z_arrest):
@@ -836,6 +890,7 @@ class WorldFlatRightSolver:
               nominal_left_q, world_flat_beta, swing_world_z_beta,
               left_chain, support_x_offset=0.0,
               support_pitch_correction=0.0,
+              support_pitch_is_right=False,
               world_x_orientation_correction=0.0,
               correction_release_speed_mps=None,
               correction_release_active=False, base_position=None,
@@ -856,17 +911,6 @@ class WorldFlatRightSolver:
                 nominal_pose[0, 3] - self.lateral_reference_x
             )
         target[0, 3] += support_x_offset
-        # Pitch balance is defined about the LEFT base-frame +Y axis.  A
-        # negative correction therefore pre-multiplies the nominal sole
-        # rotation; post-multiplication would rotate about the sole-local Y
-        # axis and would couple the correction through nominal roll/yaw.
-        if abs(support_pitch_correction) > 0.0:
-            target[:3, :3] = (
-                Rotation.from_rotvec(
-                    [0.0, support_pitch_correction, 0.0]
-                ).as_matrix()
-                @ nominal_pose[:3, :3]
-            )
         nominal_world_rotation = base_rotation @ nominal_pose[:3, :3]
         world_target_rotation = base_rotation @ target[:3, :3]
         if world_flat_beta > 0.0:
@@ -882,6 +926,17 @@ class WorldFlatRightSolver:
                 @ Rotation.from_rotvec(
                     world_flat_beta * relative_rotation
                 ).as_matrix()
+            )
+            world_target_rotation = base_rotation @ target[:3, :3]
+        # Pitch balance is defined about the support-foot base-frame +Y axis.
+        # Pre-multiply the composed base-frame target so RIGHT world-flat and
+        # this correction both survive in the single final IK target.
+        if abs(support_pitch_correction) > 0.0:
+            target[:3, :3] = (
+                Rotation.from_rotvec(
+                    [0.0, support_pitch_correction, 0.0]
+                ).as_matrix()
+                @ target[:3, :3]
             )
             world_target_rotation = base_rotation @ target[:3, :3]
         world_x_before = world_target_rotation.copy()
@@ -1116,6 +1171,10 @@ class WorldFlatRightSolver:
             valid and abs(support_pitch_correction) > 0.0
         )
         result["pitch_target_delta"] = support_pitch_correction
+        result["right_pitch_balance_success"] = bool(
+            valid and support_pitch_is_right
+            and abs(support_pitch_correction) > 0.0
+        )
         result["fore_aft_world_x_correction"] = (
             world_x_orientation_correction
         )
@@ -1330,16 +1389,31 @@ class TouchdownZArrest:
             and sim_time - self.candidate_started_at + 1e-12
             >= self.confirm_duration
         ):
+            # At confirmed touchdown, re-latch the last successfully
+            # commanded RIGHT world-Z.  This keeps the support foot at
+            # a continuous world-frame height instead of following later
+            # base motion upward.
+            if self.previous_successful_world_z is not None:
+                self.hold_world_z = self.previous_successful_world_z
             self.state = "TOUCHDOWN_CONFIRMED"
             self.confirmed_time = trajectory_time
 
     def propose(self, air_world_z):
         self.pending_recovery_hold = None
         self.pending_recovery_complete = False
-        if self.state in (
-            "FIRST_CONTACT_CANDIDATE", "TOUCHDOWN_CONFIRMED",
-        ):
+        if self.state == "FIRST_CONTACT_CANDIDATE":
+            # Before touchdown is confirmed, only block additional
+            # downward penetration.
             target = max(air_world_z, self.hold_world_z)
+        elif self.state == "TOUCHDOWN_CONFIRMED":
+            # Once touchdown is confirmed, keep RIGHT sole world-Z
+            # latched instead of allowing the moving base frame to lift
+            # the support foot back off the floor.
+            target = (
+                air_world_z
+                if self.hold_world_z is None
+                else self.hold_world_z
+            )
         elif self.state == "FALSE_CONTACT_RECOVERY":
             max_delta = self.recovery_speed_mps * self.dt
             proposed_hold = max(
@@ -1664,6 +1738,14 @@ def log_columns():
             "left_pitch_balance_solver_success",
             "left_nominal_base_pitch_deg", "left_target_base_pitch_deg",
             "left_pitch_target_delta_deg",
+            "pitch_balance_support_handoff_enabled",
+            "pitch_balance_support_handoff_beta",
+            "pitch_balance_support_state",
+            "left_pitch_balance_handoff_applied_deg",
+            "right_pitch_balance_handoff_raw_deg",
+            "right_pitch_balance_handoff_applied_deg",
+            "right_pitch_balance_support_sign",
+            "right_pitch_balance_solver_success",
             "fore_aft_sign_test_enabled",
             "fore_aft_sign_test_support_confirmed",
             "fore_aft_sign_test_requested_deg",
@@ -1696,7 +1778,8 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None,
               fore_aft_sign_test_diagnostics=None,
               left_support_z_diagnostics=None,
-              touchdown_flatten_diagnostics_row=None):
+              touchdown_flatten_diagnostics_row=None,
+              pitch_handoff_diagnostics=None):
     desired_rpy = (
         np.full(3, math.nan) if solve_result is None
         else solve_result["desired_rpy"]
@@ -1989,6 +2072,34 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
             else math.degrees(left_solve_result.get("pitch_target_delta", math.nan))
         ),
     })
+    pitch_handoff = pitch_handoff_diagnostics or {
+        "enabled": False, "beta": 0.0, "state": "DISABLED",
+        "left_applied": 0.0, "right_raw": 0.0, "right_applied": 0.0,
+        "right_sign": 1,
+    }
+    row.update({
+        "pitch_balance_support_handoff_enabled": int(
+            pitch_handoff["enabled"]
+        ),
+        "pitch_balance_support_handoff_beta": finite_text(
+            pitch_handoff["beta"]
+        ),
+        "pitch_balance_support_state": pitch_handoff["state"],
+        "left_pitch_balance_handoff_applied_deg": finite_text(
+            math.degrees(pitch_handoff["left_applied"])
+        ),
+        "right_pitch_balance_handoff_raw_deg": finite_text(
+            math.degrees(pitch_handoff["right_raw"])
+        ),
+        "right_pitch_balance_handoff_applied_deg": finite_text(
+            math.degrees(pitch_handoff["right_applied"])
+        ),
+        "right_pitch_balance_support_sign": pitch_handoff["right_sign"],
+        "right_pitch_balance_solver_success": int(
+            solve_result is not None
+            and solve_result.get("right_pitch_balance_success", False)
+        ),
+    })
     fore_aft = fore_aft_sign_test_diagnostics or {
         "enabled": False, "support_confirmed": False,
         "requested": 0.0, "beta": 0.0, "applied": 0.0,
@@ -2219,6 +2330,15 @@ def main():
             f"ramp-in/out={args.pitch_balance_ramp_in:.3f}/"
             f"{args.pitch_balance_ramp_out:.3f} sim-s"
         )
+    if args.pitch_balance_support_handoff:
+        print(
+            "pitch-balance-support-handoff=enabled "
+            f"ramp={args.pitch_balance_support_handoff_ramp_s:.3f} sim-s "
+            f"RIGHT-sign={args.pitch_balance_right_support_sign:+d} "
+            f"RIGHT-max={args.pitch_balance_right_max_angle_deg:.3f} deg"
+        )
+    else:
+        print("pitch-balance-support-handoff=disabled")
     if args.swing_world_z_leg is None:
         print("swing-world-Z=disabled")
     else:
@@ -2586,6 +2706,37 @@ def main():
                     0.0 if flatten_diagnostics is None
                     else flatten_diagnostics["applied"]
                 )
+                pitch_handoff_beta, pitch_support_state = (
+                    pitch_balance_support_handoff(
+                        trajectory_time, touchdown_z_arrest,
+                        args.pitch_balance_support_handoff,
+                        args.pitch_balance_support_handoff_ramp_s,
+                    )
+                )
+                left_pitch_correction = pitch_correction * (
+                    1.0 - pitch_handoff_beta
+                )
+                right_pitch_raw = (
+                    args.pitch_balance_right_support_sign * pitch_correction
+                )
+                right_pitch_max = math.radians(
+                    args.pitch_balance_right_max_angle_deg
+                )
+                right_pitch_clamped = max(
+                    -right_pitch_max, min(right_pitch_max, right_pitch_raw)
+                )
+                right_pitch_correction = (
+                    pitch_handoff_beta * right_pitch_clamped
+                )
+                pitch_handoff_diagnostics = {
+                    "enabled": args.pitch_balance_support_handoff,
+                    "beta": pitch_handoff_beta,
+                    "state": pitch_support_state,
+                    "left_applied": left_pitch_correction,
+                    "right_raw": right_pitch_raw,
+                    "right_applied": right_pitch_correction,
+                    "right_sign": args.pitch_balance_right_support_sign,
+                }
                 left_handoff_beta = 1.0
                 left_offset_before_handoff = math.nan
                 left_offset_after_handoff = math.nan
@@ -2637,6 +2788,7 @@ def main():
                     or right_solver.correction_release_state == "RELEASE_TAIL"
                     or fore_aft_sign_test_enabled
                     or touchdown_flatten_enabled
+                    or abs(right_pitch_correction) > 0.0
                 ):
                     solve_result = right_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -2644,6 +2796,8 @@ def main():
                         leg_vector(nominal, "LL"),
                         right_world_beta, swing_world_z_beta,
                         chains["left"],
+                        support_pitch_correction=right_pitch_correction,
+                        support_pitch_is_right=True,
                         world_x_orientation_correction=(
                             fore_aft_applied + touchdown_flatten_applied
                         ),
@@ -2721,7 +2875,7 @@ def main():
                         left_world_beta, 0.0,
                         chains["right"],
                         support_x_offset=lateral_offset,
-                        support_pitch_correction=pitch_correction,
+                        support_pitch_correction=left_pitch_correction,
                         base_position=base_position,
                         support_z_hold=left_support_z_hold,
                         support_z_trajectory_time=trajectory_time,
@@ -2826,6 +2980,7 @@ def main():
                         else left_solve_result.get("left_support_z_hold")
                     ),
                     touchdown_flatten_diagnostics_row=flatten_diagnostics,
+                    pitch_handoff_diagnostics=pitch_handoff_diagnostics,
                 )
                 stream.flush()
                 if touchdown_detected_now:

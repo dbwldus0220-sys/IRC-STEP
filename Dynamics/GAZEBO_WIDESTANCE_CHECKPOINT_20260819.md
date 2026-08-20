@@ -118,3 +118,97 @@ t ~= 1.18 to 1.34 s:
 Main remaining hypothesis:
 RIGHT touchdown impact / rebound and support-transfer timing are causing
 the post-touchdown failure after the wide-stance single-support fix.
+
+## Update — 2026-08-20: confirmed touchdown world-Z latch
+
+### TouchdownZArrest finding
+
+Previous `TouchdownZArrest` behavior after contact was:
+
+    target = max(air_world_z, hold_world_z)
+
+for both FIRST_CONTACT_CANDIDATE and TOUCHDOWN_CONFIRMED.
+
+Therefore it blocked only additional downward RIGHT world-Z motion.
+It did NOT keep the confirmed support foot fixed in world Z.
+
+SOFTRETURN evidence:
+- touchdown confirmed around t ~= 1.25 s
+- latched hold world-Z ~= 6.2 mm
+- but RIGHT target world-Z later rose:
+  8.2 -> 10.5 -> 16.3 -> 20.0 -> 24.3 mm
+- actual RIGHT sole Z rose with it
+- RIGHT contact was subsequently lost
+
+The rise was NOT caused by swing-world-Z correction release:
+- output correction decayed to ~0 by t ~= 1.29
+- source RIGHT fore-aft / vertical trajectory was already near landing
+- world-Z rise came from the moving base/world transformation path
+
+### Implemented diagnostic fix
+
+`publish_leg_walk_csv_sdf6dik_world_flat_simtime.py` now:
+
+- FIRST_CONTACT_CANDIDATE:
+  keeps original downward-only Z arrest behavior
+
+- TOUCHDOWN_CONFIRMED:
+  re-latches the last successfully commanded RIGHT world-Z and keeps
+  that value fixed
+
+No lateral, pitch, flatten, handoff, or planner gains were changed.
+
+### Z-latch Gazebo result
+
+Visual:
+- RIGHT foot no longer felt like it rose away again after confirmed contact
+- RIGHT remained a support foot more clearly
+- body still twisted and fell backward
+
+Command behavior:
+- confirmed RIGHT target world-Z stayed ~= 10.2 mm instead of rising
+  above 20 mm
+
+Remaining instability:
+- COM backward velocity starts before strong yaw/handoff effects
+- Z_LATCH threshold ordering:
+  - COM Vy > +0.05 m/s: ~1.18 s
+  - baseRoll < -10 deg: ~1.26 s
+  - baseYaw change > 3 deg: ~1.28 s
+  - support handoff beta > 0.5: ~1.28 s
+
+Thus current priority is NOT yaw/handoff tuning first.
+Backward sagittal motion begins earlier.
+
+### Fore-aft source check
+
+Original BASE and SOFTRETURN `Ref_RL_x` are identical.
+
+Near touchdown:
+- t=1.14: +23.20 mm
+- t=1.16: +23.60 mm
+- t=1.18: +23.53 mm
+- t=1.20: +22.95 mm
+
+Therefore nominal RIGHT fore-aft source velocity is already near zero
+around t=1.16~1.18.
+
+However actual Gazebo RIGHT sole world-Y velocity near first contact was
+much larger.
+
+### Next investigation
+
+Using the existing Z_LATCH logs, separate:
+
+1. base world-Y velocity
+2. RIGHT sole world-Y velocity
+3. RIGHT sole velocity relative to the moving base
+4. LEFT sole relative velocity
+5. source nominal RIGHT fore-aft velocity
+
+Goal:
+determine whether the large touchdown fore-aft velocity is caused by
+RIGHT-leg relative motion or whole-body/base motion.
+
+Do NOT create another fore-aft trajectory modification before this check.
+Keep the confirmed RIGHT world-Z latch enabled.
