@@ -187,6 +187,14 @@ def parse_args():
         "--touchdown-z-arrest-confirm-s", type=float, default=0.02,
     )
     parser.add_argument(
+        "--touchdown-z-arrest-settle-depth-m", type=float, default=0.0,
+        help="maximum downward RIGHT world-Z settle after confirmed touchdown",
+    )
+    parser.add_argument(
+        "--touchdown-z-arrest-settle-speed-mps", type=float, default=0.0,
+        help="downward RIGHT world-Z settle speed after confirmed touchdown",
+    )
+    parser.add_argument(
         "--left-support-z-hold-until-right-confirmed", action="store_true",
         help="hold only LEFT sole world-Z until stable RIGHT touchdown",
     )
@@ -416,6 +424,8 @@ def parse_args():
         args.touchdown_left_feedback_ramp_out,
         args.touchdown_z_arrest_threshold_n,
         args.touchdown_z_arrest_confirm_s,
+        args.touchdown_z_arrest_settle_depth_m,
+        args.touchdown_z_arrest_settle_speed_mps,
         args.left_support_z_release_s,
     )
     if not all(math.isfinite(value) for value in touchdown_numeric):
@@ -430,6 +440,14 @@ def parse_args():
         parser.error("--touchdown-z-arrest-threshold-n must be positive")
     if args.touchdown_z_arrest_confirm_s < 0.0:
         parser.error("--touchdown-z-arrest-confirm-s must be non-negative")
+    if args.touchdown_z_arrest_settle_depth_m < 0.0:
+        parser.error(
+            "--touchdown-z-arrest-settle-depth-m must be non-negative"
+        )
+    if args.touchdown_z_arrest_settle_speed_mps < 0.0:
+        parser.error(
+            "--touchdown-z-arrest-settle-speed-mps must be non-negative"
+        )
     if not 0.02 <= args.left_support_z_release_s <= 0.20:
         parser.error("--left-support-z-release-s must be in [0.02, 0.20]")
     if not math.isfinite(args.fore_aft_sign_test_ramp_in_s):
@@ -1333,12 +1351,15 @@ class TouchdownZArrest:
     """Block only additional downward RIGHT world-Z motion after contact."""
 
     def __init__(self, threshold_n, confirm_duration, arm_trajectory_time,
-                 recovery_speed_mps, dt):
+                 recovery_speed_mps, dt, settle_depth_m=0.0,
+                 settle_speed_mps=0.0):
         self.threshold_n = threshold_n
         self.confirm_duration = confirm_duration
         self.arm_trajectory_time = arm_trajectory_time
         self.recovery_speed_mps = recovery_speed_mps
         self.dt = dt
+        self.settle_depth_m = settle_depth_m
+        self.settle_speed_mps = settle_speed_mps
         self.state = "SWING"
         self.unloaded_once = False
         self.last_contact_sequence = None
@@ -1350,6 +1371,12 @@ class TouchdownZArrest:
         self.false_contact_count = 0
         self.pending_recovery_hold = None
         self.pending_recovery_complete = False
+        self.settle_floor_world_z = None
+        self.pending_settle_hold = None
+
+    @property
+    def settle_enabled(self):
+        return self.settle_depth_m > 0.0 and self.settle_speed_mps > 0.0
 
     @property
     def active(self):
@@ -1395,12 +1422,18 @@ class TouchdownZArrest:
             # base motion upward.
             if self.previous_successful_world_z is not None:
                 self.hold_world_z = self.previous_successful_world_z
+            self.settle_floor_world_z = (
+                self.hold_world_z - self.settle_depth_m
+                if self.settle_enabled and self.hold_world_z is not None
+                else None
+            )
             self.state = "TOUCHDOWN_CONFIRMED"
             self.confirmed_time = trajectory_time
 
     def propose(self, air_world_z):
         self.pending_recovery_hold = None
         self.pending_recovery_complete = False
+        self.pending_settle_hold = None
         if self.state == "FIRST_CONTACT_CANDIDATE":
             # Before touchdown is confirmed, only block additional
             # downward penetration.
@@ -1409,11 +1442,24 @@ class TouchdownZArrest:
             # Once touchdown is confirmed, keep RIGHT sole world-Z
             # latched instead of allowing the moving base frame to lift
             # the support foot back off the floor.
-            target = (
-                air_world_z
-                if self.hold_world_z is None
-                else self.hold_world_z
-            )
+            if (
+                self.settle_enabled
+                and self.hold_world_z is not None
+                and self.settle_floor_world_z is not None
+            ):
+                max_delta = self.settle_speed_mps * self.dt
+                proposed_hold = max(
+                    self.settle_floor_world_z,
+                    self.hold_world_z - max_delta,
+                )
+                target = proposed_hold
+                self.pending_settle_hold = proposed_hold
+            else:
+                target = (
+                    air_world_z
+                    if self.hold_world_z is None
+                    else self.hold_world_z
+                )
         elif self.state == "FALSE_CONTACT_RECOVERY":
             max_delta = self.recovery_speed_mps * self.dt
             proposed_hold = max(
@@ -1440,6 +1486,11 @@ class TouchdownZArrest:
 
     def commit_successful_target(self, target_world_z):
         self.previous_successful_world_z = target_world_z
+        if (
+            self.state == "TOUCHDOWN_CONFIRMED"
+            and self.pending_settle_hold is not None
+        ):
+            self.hold_world_z = self.pending_settle_hold
         if self.state == "FALSE_CONTACT_RECOVERY":
             if self.pending_recovery_hold is not None:
                 self.hold_world_z = self.pending_recovery_hold
@@ -1448,6 +1499,7 @@ class TouchdownZArrest:
                 self.hold_world_z = None
         self.pending_recovery_hold = None
         self.pending_recovery_complete = False
+        self.pending_settle_hold = None
 
     def diagnostics(self, right_fz, solve_result):
         target = (
@@ -1463,6 +1515,22 @@ class TouchdownZArrest:
             "confirmed_time": self.confirmed_time,
             "hold_world_z": (
                 math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+            "settle_enabled": self.settle_enabled,
+            "settle_floor_world_z": (
+                math.nan
+                if self.settle_floor_world_z is None
+                else self.settle_floor_world_z
+            ),
+            "settle_applied_m": (
+                0.0
+                if self.settle_floor_world_z is None
+                or self.hold_world_z is None
+                else max(
+                    0.0,
+                    self.settle_floor_world_z + self.settle_depth_m
+                    - self.hold_world_z,
+                )
             ),
             "air_world_z": target.get("air_world_z", math.nan),
             "target_world_z": target.get("target_world_z", math.nan),
@@ -1673,6 +1741,9 @@ def log_columns():
             "touchdown_z_arrest_first_crossing_time",
             "touchdown_z_arrest_confirmed_time",
             "touchdown_z_arrest_hold_world_z_m",
+            "touchdown_z_arrest_settle_enabled",
+            "touchdown_z_arrest_settle_floor_world_z_m",
+            "touchdown_z_arrest_settle_applied_m",
             "right_air_world_z_desired_m",
             "right_touchdown_world_z_target_m",
             "right_world_z_downward_blocked_m",
@@ -1874,6 +1945,8 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "state": "DISABLED", "active": False, "right_fz": math.nan,
         "unloaded_once": False, "first_crossing_time": math.nan,
         "confirmed_time": math.nan, "hold_world_z": math.nan,
+        "settle_enabled": False, "settle_floor_world_z": math.nan,
+        "settle_applied_m": 0.0,
         "air_world_z": math.nan, "target_world_z": math.nan,
         "blocked": 0.0, "false_contact_count": 0,
     }
@@ -1890,6 +1963,13 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         ),
         "touchdown_z_arrest_hold_world_z_m": finite_text(
             arrest["hold_world_z"]
+        ),
+        "touchdown_z_arrest_settle_enabled": int(arrest["settle_enabled"]),
+        "touchdown_z_arrest_settle_floor_world_z_m": finite_text(
+            arrest["settle_floor_world_z"]
+        ),
+        "touchdown_z_arrest_settle_applied_m": finite_text(
+            arrest["settle_applied_m"]
         ),
         "right_air_world_z_desired_m": finite_text(arrest["air_world_z"]),
         "right_touchdown_world_z_target_m": finite_text(
@@ -2390,7 +2470,9 @@ def main():
         print(
             "touchdown-Z-arrest=enabled "
             f"Fz>={args.touchdown_z_arrest_threshold_n:.3f} N "
-            f"confirm={args.touchdown_z_arrest_confirm_s:.3f} sim-s"
+            f"confirm={args.touchdown_z_arrest_confirm_s:.3f} sim-s "
+            f"settle-depth={args.touchdown_z_arrest_settle_depth_m:.6f} m "
+            f"settle-speed={args.touchdown_z_arrest_settle_speed_mps:.6f} m/s"
         )
     else:
         print("touchdown-Z-arrest=disabled")
@@ -2505,6 +2587,8 @@ def main():
                 args.swing_world_z_start,
                 args.swing_world_z_max_correction_release_speed_mps,
                 args.dt,
+                args.touchdown_z_arrest_settle_depth_m,
+                args.touchdown_z_arrest_settle_speed_mps,
             )
             if args.touchdown_z_arrest else None
         )
