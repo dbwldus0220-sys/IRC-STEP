@@ -134,6 +134,12 @@ def parse_args():
     parser.add_argument("--lateral-balance-max-offset-m", type=float)
     parser.add_argument("--lateral-balance-ramp-in", type=float)
     parser.add_argument("--lateral-balance-ramp-out", type=float)
+    parser.add_argument(
+        "--lateral-balance-support-handoff", action="store_true",
+    )
+    parser.add_argument(
+        "--lateral-balance-support-handoff-ramp-s", type=float, default=0.20,
+    )
     parser.add_argument("--pitch-balance-start", type=float)
     parser.add_argument("--pitch-balance-end", type=float)
     parser.add_argument("--pitch-balance-kp", type=float)
@@ -154,6 +160,17 @@ def parse_args():
     )
     parser.add_argument(
         "--pitch-balance-right-max-angle-deg", type=float, default=0.5,
+    )
+    parser.add_argument(
+        "--pitch-balance-right-rate-limit-deg-s", type=float,
+        help="optional RIGHT pitch-balance handoff angular rate limit",
+    )
+    parser.add_argument("--left-support-impact-anchor", action="store_true")
+    parser.add_argument(
+        "--left-support-impact-anchor-hold-s", type=float, default=0.10,
+    )
+    parser.add_argument(
+        "--left-support-impact-anchor-release-s", type=float, default=0.20,
     )
     parser.add_argument(
         "--touchdown-support-hold", action="store_true",
@@ -193,6 +210,9 @@ def parse_args():
     parser.add_argument(
         "--touchdown-z-arrest-settle-speed-mps", type=float, default=0.0,
         help="downward RIGHT world-Z settle speed after confirmed touchdown",
+    )
+    parser.add_argument(
+        "--touchdown-z-arrest-post-settle-release-s", type=float,
     )
     parser.add_argument(
         "--left-support-z-hold-until-right-confirmed", action="store_true",
@@ -376,6 +396,16 @@ def parse_args():
             > args.lateral_balance_end
         ):
             parser.error("lateral balance ramp-in must finish by its end")
+    if not math.isfinite(args.lateral_balance_support_handoff_ramp_s):
+        parser.error("lateral balance support handoff ramp must be finite")
+    if args.lateral_balance_support_handoff_ramp_s < 0.0:
+        parser.error(
+            "--lateral-balance-support-handoff-ramp-s must be non-negative"
+        )
+    if args.lateral_balance_support_handoff and not args.touchdown_z_arrest:
+        parser.error(
+            "--lateral-balance-support-handoff requires --touchdown-z-arrest"
+        )
     if args.pitch_balance_start is not None:
         if min(
             args.pitch_balance_start, args.pitch_balance_end,
@@ -409,6 +439,28 @@ def parse_args():
         )
     if args.pitch_balance_right_max_angle_deg <= 0.0:
         parser.error("--pitch-balance-right-max-angle-deg must be positive")
+    if (
+        args.pitch_balance_right_rate_limit_deg_s is not None
+        and (
+            not math.isfinite(args.pitch_balance_right_rate_limit_deg_s)
+            or args.pitch_balance_right_rate_limit_deg_s <= 0.0
+        )
+    ):
+        parser.error(
+            "--pitch-balance-right-rate-limit-deg-s must be finite and positive"
+        )
+    impact_anchor_times = (
+        args.left_support_impact_anchor_hold_s,
+        args.left_support_impact_anchor_release_s,
+    )
+    if not all(math.isfinite(value) for value in impact_anchor_times):
+        parser.error("LEFT support impact anchor times must be finite")
+    if min(impact_anchor_times) < 0.0:
+        parser.error("LEFT support impact anchor times must be non-negative")
+    if args.left_support_impact_anchor and not args.touchdown_z_arrest:
+        parser.error(
+            "--left-support-impact-anchor requires --touchdown-z-arrest"
+        )
     if args.pitch_balance_support_handoff:
         if args.pitch_balance_start is None:
             parser.error(
@@ -448,6 +500,28 @@ def parse_args():
         parser.error(
             "--touchdown-z-arrest-settle-speed-mps must be non-negative"
         )
+    if args.touchdown_z_arrest_post_settle_release_s is not None:
+        if (
+            not math.isfinite(args.touchdown_z_arrest_post_settle_release_s)
+            or args.touchdown_z_arrest_post_settle_release_s <= 0.0
+        ):
+            parser.error(
+                "--touchdown-z-arrest-post-settle-release-s must be finite "
+                "and positive"
+            )
+        if not args.touchdown_z_arrest:
+            parser.error(
+                "--touchdown-z-arrest-post-settle-release-s requires "
+                "--touchdown-z-arrest"
+            )
+        if (
+            args.touchdown_z_arrest_settle_depth_m <= 0.0
+            or args.touchdown_z_arrest_settle_speed_mps <= 0.0
+        ):
+            parser.error(
+                "--touchdown-z-arrest-post-settle-release-s requires "
+                "positive touchdown settle depth and speed"
+            )
     if not 0.02 <= args.left_support_z_release_s <= 0.20:
         parser.error("--left-support-z-release-s must be in [0.02, 0.20]")
     if not math.isfinite(args.fore_aft_sign_test_ramp_in_s):
@@ -621,6 +695,10 @@ RIGHT_JOINT_NAMES = tuple(
     joint_name_from_command_topic(LEG_JOINT_TOPICS[f"RL{index}_wrap"])
     for index in range(6)
 )
+LEFT_JOINT_NAMES = tuple(
+    joint_name_from_command_topic(LEG_JOINT_TOPICS[f"LL{index}_wrap"])
+    for index in range(6)
+)
 
 
 class TouchdownMeasurements:
@@ -680,7 +758,11 @@ class TouchdownMeasurements:
                 self.joint_positions.get(name, math.nan)
                 for name in RIGHT_JOINT_NAMES
             ])
-            return self.right_fz, self.contact_sequence, right_q
+            left_q = np.array([
+                self.joint_positions.get(name, math.nan)
+                for name in LEFT_JOINT_NAMES
+            ])
+            return self.right_fz, self.contact_sequence, right_q, left_q
 
 
 def load_targets(path):
@@ -764,6 +846,15 @@ def smoothstep(unit_value):
     return 3.0 * value * value - 2.0 * value * value * value
 
 
+def release_touchdown_downward_block(air_world_z, original_target_world_z,
+                                     release_beta):
+    blocked_before = max(0.0, original_target_world_z - air_world_z)
+    if release_beta <= 0.0:
+        return original_target_world_z, blocked_before, blocked_before
+    blocked_after = (1.0 - release_beta) * blocked_before
+    return air_world_z + blocked_after, blocked_before, blocked_after
+
+
 def feedback_beta(phase, trajectory_time, start, end, ramp_in, ramp_out):
     if phase != "REPLAY" or start is None:
         return 0.0
@@ -803,6 +894,40 @@ def pitch_balance_support_handoff(trajectory_time, touchdown_z_arrest,
     elapsed = trajectory_time - touchdown_z_arrest.confirmed_time
     beta = 1.0 if ramp_s <= 0.0 else smoothstep(elapsed / ramp_s)
     return beta, ("RIGHT_SUPPORT" if beta >= 1.0 else "HANDOFF_RAMP")
+
+
+def lateral_balance_support_handoff(trajectory_time, touchdown_z_arrest,
+                                    enabled, ramp_s):
+    if not enabled:
+        return 0.0, "DISABLED"
+    if (
+        touchdown_z_arrest is None
+        or touchdown_z_arrest.state != "TOUCHDOWN_CONFIRMED"
+        or not math.isfinite(touchdown_z_arrest.confirmed_time)
+    ):
+        return 0.0, "WAITING_FOR_TOUCHDOWN"
+    elapsed = trajectory_time - touchdown_z_arrest.confirmed_time
+    beta = 1.0 if ramp_s <= 0.0 else smoothstep(elapsed / ramp_s)
+    return beta, ("RIGHT_SUPPORT" if beta >= 1.0 else "HANDOFF_RAMP")
+
+
+def split_lateral_support_offset(lateral_offset, handoff_beta, enabled):
+    if not enabled:
+        return lateral_offset, 0.0
+    return (
+        (1.0 - handoff_beta) * lateral_offset,
+        handoff_beta * lateral_offset,
+    )
+
+
+def propose_angular_rate_limited(target, previous, rate_limit_deg_s, dt):
+    if rate_limit_deg_s is None:
+        return target, False
+    max_delta = math.radians(rate_limit_deg_s) * dt
+    delta = target - previous
+    applied_delta = max(-max_delta, min(max_delta, delta))
+    output = previous + applied_delta
+    return output, abs(applied_delta - delta) > 1e-15
 
 
 def touchdown_flatten_diagnostics(trajectory_time, requested_correction,
@@ -867,6 +992,116 @@ def world_flat_orientation(world_reference, nominal_world_rotation):
     return Rotation.from_euler("z", yaw_delta).as_matrix() @ world_reference
 
 
+def wrap_to_pi(angle):
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def apply_world_x_yaw_anchor(target, base_rotation, base_position,
+                             anchor_world_x, anchor_world_yaw, beta):
+    world_position = base_position + base_rotation @ target[:3, 3]
+    world_rpy = Rotation.from_matrix(
+        base_rotation @ target[:3, :3]
+    ).as_euler("xyz")
+    diagnostics = {
+        "target_world_x_before": world_position[0],
+        "target_world_x_after": world_position[0],
+        "target_world_yaw_before": world_rpy[2],
+        "target_world_yaw_after": world_rpy[2],
+    }
+    if beta <= 0.0:
+        return target.copy(), diagnostics
+
+    anchored = target.copy()
+    final_world_position = world_position.copy()
+    final_world_position[0] = (
+        beta * anchor_world_x + (1.0 - beta) * world_position[0]
+    )
+    final_world_yaw = world_rpy[2] + beta * wrap_to_pi(
+        anchor_world_yaw - world_rpy[2]
+    )
+    final_world_rotation = Rotation.from_euler(
+        "xyz", [world_rpy[0], world_rpy[1], final_world_yaw]
+    ).as_matrix()
+    anchored[:3, 3] = base_rotation.T @ (
+        final_world_position - base_position
+    )
+    anchored[:3, :3] = base_rotation.T @ final_world_rotation
+    diagnostics.update({
+        "target_world_x_after": final_world_position[0],
+        "target_world_yaw_after": final_world_yaw,
+    })
+    return anchored, diagnostics
+
+
+class LeftSupportImpactAnchor:
+    def __init__(self, enabled, hold_s, release_s, chain):
+        self.enabled = enabled
+        self.hold_s = hold_s
+        self.release_s = release_s
+        self.chain = chain
+        self.anchor_world_x = math.nan
+        self.anchor_world_yaw = math.nan
+        self.start_trajectory_time = math.nan
+
+    def try_latch(self, touchdown_z_arrest, measured_left_q,
+                  base_rotation, base_position):
+        if (
+            not self.enabled
+            or math.isfinite(self.start_trajectory_time)
+            or touchdown_z_arrest is None
+            or touchdown_z_arrest.state != "TOUCHDOWN_CONFIRMED"
+            or not math.isfinite(touchdown_z_arrest.confirmed_time)
+            or not np.all(np.isfinite(measured_left_q))
+        ):
+            return
+        measured_pose = self.chain.forward(measured_left_q)
+        measured_world_position = (
+            base_position + base_rotation @ measured_pose[:3, 3]
+        )
+        measured_world_rotation = base_rotation @ measured_pose[:3, :3]
+        self.anchor_world_x = measured_world_position[0]
+        self.anchor_world_yaw = Rotation.from_matrix(
+            measured_world_rotation
+        ).as_euler("xyz")[2]
+        self.start_trajectory_time = touchdown_z_arrest.confirmed_time
+
+    def beta(self, trajectory_time):
+        if not math.isfinite(self.start_trajectory_time):
+            return 0.0
+        elapsed = max(0.0, trajectory_time - self.start_trajectory_time)
+        if elapsed <= self.hold_s:
+            return 1.0
+        if self.release_s <= 0.0:
+            return 0.0
+        return 1.0 - smoothstep((elapsed - self.hold_s) / self.release_s)
+
+    def state(self, trajectory_time):
+        if not self.enabled:
+            return "DISABLED"
+        if not math.isfinite(self.start_trajectory_time):
+            return "WAITING_FOR_TOUCHDOWN"
+        beta = self.beta(trajectory_time)
+        if beta <= 0.0:
+            return "RELEASED"
+        if beta >= 1.0:
+            return "HOLDING"
+        return "RELEASING"
+
+    def diagnostics(self, trajectory_time):
+        return {
+            "enabled": self.enabled,
+            "state": self.state(trajectory_time),
+            "beta": self.beta(trajectory_time),
+            "anchor_world_x": self.anchor_world_x,
+            "anchor_world_yaw": self.anchor_world_yaw,
+            "start_trajectory_time": self.start_trajectory_time,
+            "target_world_x_before": math.nan,
+            "target_world_x_after": math.nan,
+            "target_world_yaw_before": math.nan,
+            "target_world_yaw_after": math.nan,
+        }
+
+
 class WorldFlatRightSolver:
     def __init__(self, chain, world_reference, dt, initial_base_rotation,
                  initial_right_position, initial_left_position,
@@ -913,7 +1148,8 @@ class WorldFlatRightSolver:
               correction_release_speed_mps=None,
               correction_release_active=False, base_position=None,
               touchdown_z_arrest=None, support_z_hold=None,
-              support_z_trajectory_time=None):
+              support_z_trajectory_time=None, impact_anchor=None,
+              impact_anchor_trajectory_time=None):
         if self._can_reuse(frame, base_rotation, simulation_time):
             return self.cached_result
 
@@ -1091,7 +1327,9 @@ class WorldFlatRightSolver:
                 air_world_z = (
                     base_position[2] + (base_rotation @ target[:3, 3])[2]
                 )
-                arrest_diagnostics = touchdown_z_arrest.propose(air_world_z)
+                arrest_diagnostics = touchdown_z_arrest.propose(
+                    air_world_z, support_z_trajectory_time
+                )
                 target_world_z = arrest_diagnostics["target_world_z"]
                 if arrest_diagnostics["blocked"] > 0.0:
                     target[2, 3] = (
@@ -1119,6 +1357,20 @@ class WorldFlatRightSolver:
                         - base_rotation[2, 0] * target[0, 3]
                         - base_rotation[2, 1] * target[1, 3]
                     ) / base_rotation[2, 2]
+        impact_anchor_diagnostics = None
+        if impact_anchor is not None:
+            impact_anchor_diagnostics = impact_anchor.diagnostics(
+                impact_anchor_trajectory_time
+            )
+            if impact_anchor_diagnostics["beta"] > 0.0:
+                target, applied_diagnostics = apply_world_x_yaw_anchor(
+                    target, base_rotation, base_position,
+                    impact_anchor.anchor_world_x,
+                    impact_anchor.anchor_world_yaw,
+                    impact_anchor_diagnostics["beta"],
+                )
+                impact_anchor_diagnostics.update(applied_diagnostics)
+                world_target_rotation = base_rotation @ target[:3, :3]
         target_relative = target[:3, 3] - left_position
         predicted_after_target = (base_rotation @ target_relative)[2]
 
@@ -1236,6 +1488,7 @@ class WorldFlatRightSolver:
             )
         result["touchdown_z_arrest"] = arrest_diagnostics
         result["left_support_z_hold"] = support_z_diagnostics
+        result["left_support_impact_anchor"] = impact_anchor_diagnostics
         self._cache(frame, simulation_time, base_rotation, result)
         return result
 
@@ -1352,7 +1605,7 @@ class TouchdownZArrest:
 
     def __init__(self, threshold_n, confirm_duration, arm_trajectory_time,
                  recovery_speed_mps, dt, settle_depth_m=0.0,
-                 settle_speed_mps=0.0):
+                 settle_speed_mps=0.0, post_settle_release_s=None):
         self.threshold_n = threshold_n
         self.confirm_duration = confirm_duration
         self.arm_trajectory_time = arm_trajectory_time
@@ -1360,6 +1613,7 @@ class TouchdownZArrest:
         self.dt = dt
         self.settle_depth_m = settle_depth_m
         self.settle_speed_mps = settle_speed_mps
+        self.post_settle_release_s = post_settle_release_s
         self.state = "SWING"
         self.unloaded_once = False
         self.last_contact_sequence = None
@@ -1373,6 +1627,7 @@ class TouchdownZArrest:
         self.pending_recovery_complete = False
         self.settle_floor_world_z = None
         self.pending_settle_hold = None
+        self.post_settle_release_start_time = math.nan
 
     @property
     def settle_enabled(self):
@@ -1430,7 +1685,7 @@ class TouchdownZArrest:
             self.state = "TOUCHDOWN_CONFIRMED"
             self.confirmed_time = trajectory_time
 
-    def propose(self, air_world_z):
+    def propose(self, air_world_z, trajectory_time):
         self.pending_recovery_hold = None
         self.pending_recovery_complete = False
         self.pending_settle_hold = None
@@ -1473,15 +1728,59 @@ class TouchdownZArrest:
             )
         else:
             target = air_world_z
+        original_target = target
+        if (
+            self.post_settle_release_s is not None
+            and not math.isfinite(self.post_settle_release_start_time)
+            and self.state == "TOUCHDOWN_CONFIRMED"
+            and self.settle_enabled
+            and self.hold_world_z is not None
+            and self.settle_floor_world_z is not None
+            and self.hold_world_z - self.settle_floor_world_z <= 1e-9
+        ):
+            self.post_settle_release_start_time = trajectory_time
+        release_beta = 0.0
+        if math.isfinite(self.post_settle_release_start_time):
+            release_beta = smoothstep(
+                (trajectory_time - self.post_settle_release_start_time)
+                / self.post_settle_release_s
+            )
+        (
+            target,
+            original_blocked,
+            blocked_after_release,
+        ) = release_touchdown_downward_block(
+            air_world_z, original_target, release_beta
+        )
+        if self.post_settle_release_s is None:
+            release_state = "DISABLED"
+        elif not math.isfinite(self.post_settle_release_start_time):
+            release_state = "WAITING_FOR_SETTLE"
+        elif release_beta >= 1.0:
+            release_state = "RELEASED"
+        else:
+            release_state = "RELEASING"
         return {
             "state": self.state,
             "active": self.active,
             "air_world_z": air_world_z,
             "target_world_z": target,
-            "blocked": max(0.0, target - air_world_z),
+            "blocked": blocked_after_release,
             "hold_world_z": (
                 math.nan if self.hold_world_z is None else self.hold_world_z
             ),
+            "post_settle_release_enabled": (
+                self.post_settle_release_s is not None
+            ),
+            "post_settle_release_state": release_state,
+            "post_settle_release_start_time": (
+                self.post_settle_release_start_time
+            ),
+            "post_settle_release_beta": release_beta,
+            "blocked_before_release": original_blocked,
+            "blocked_after_release": blocked_after_release,
+            "target_before_release_world_z": original_target,
+            "target_after_release_world_z": target,
         }
 
     def commit_successful_target(self, target_world_z):
@@ -1536,6 +1835,35 @@ class TouchdownZArrest:
             "target_world_z": target.get("target_world_z", math.nan),
             "blocked": target.get("blocked", 0.0),
             "false_contact_count": self.false_contact_count,
+            "post_settle_release_enabled": target.get(
+                "post_settle_release_enabled",
+                self.post_settle_release_s is not None,
+            ),
+            "post_settle_release_state": target.get(
+                "post_settle_release_state",
+                "DISABLED"
+                if self.post_settle_release_s is None
+                else "WAITING_FOR_SETTLE",
+            ),
+            "post_settle_release_start_time": target.get(
+                "post_settle_release_start_time",
+                self.post_settle_release_start_time,
+            ),
+            "post_settle_release_beta": target.get(
+                "post_settle_release_beta", 0.0
+            ),
+            "blocked_before_release": target.get(
+                "blocked_before_release", 0.0
+            ),
+            "blocked_after_release": target.get(
+                "blocked_after_release", 0.0
+            ),
+            "target_before_release_world_z": target.get(
+                "target_before_release_world_z", math.nan
+            ),
+            "target_after_release_world_z": target.get(
+                "target_after_release_world_z", math.nan
+            ),
         }
 
 
@@ -1744,6 +2072,14 @@ def log_columns():
             "touchdown_z_arrest_settle_enabled",
             "touchdown_z_arrest_settle_floor_world_z_m",
             "touchdown_z_arrest_settle_applied_m",
+            "touchdown_z_arrest_post_settle_release_enabled",
+            "touchdown_z_arrest_post_settle_release_state",
+            "touchdown_z_arrest_post_settle_release_start_time",
+            "touchdown_z_arrest_post_settle_release_beta",
+            "touchdown_z_arrest_blocked_before_release_m",
+            "touchdown_z_arrest_blocked_after_release_m",
+            "touchdown_z_arrest_target_before_release_world_z_m",
+            "touchdown_z_arrest_target_after_release_world_z_m",
             "right_air_world_z_desired_m",
             "right_touchdown_world_z_target_m",
             "right_world_z_downward_blocked_m",
@@ -1754,6 +2090,16 @@ def log_columns():
             "left_support_z_nominal_world_z", "left_support_z_final_world_z",
             "left_support_z_hold_start_time",
             "left_support_z_release_start_time",
+            "left_support_impact_anchor_enabled",
+            "left_support_impact_anchor_state",
+            "left_support_impact_anchor_beta",
+            "left_support_impact_anchor_world_x_m",
+            "left_support_impact_target_world_x_before_m",
+            "left_support_impact_target_world_x_after_m",
+            "left_support_impact_anchor_world_yaw_deg",
+            "left_support_impact_target_world_yaw_before_deg",
+            "left_support_impact_target_world_yaw_after_deg",
+            "left_support_impact_anchor_start_trajectory_time",
             "right_nominal_pos_err_mm",
             "right_world_ori_err_before_deg", "right_world_ori_err_after_deg",
             "right_ik_pos_err_mm", "right_ik_ori_err_deg",
@@ -1785,8 +2131,14 @@ def log_columns():
             "lateral_velocity_error_mps",
             "lateral_support_x_raw_offset_m",
             "lateral_support_x_applied_offset_m", "lateral_balance_beta",
+            "lateral_balance_support_handoff_enabled",
+            "lateral_balance_support_handoff_beta",
+            "lateral_balance_support_state",
+            "left_lateral_support_x_applied_offset_m",
+            "right_lateral_support_x_applied_offset_m",
             "left_lateral_solver_success", "left_lateral_target_x_m",
             "left_lateral_ik_pos_err_mm",
+            "right_lateral_solver_success", "right_lateral_target_x_m",
             "touchdown_state", "touchdown_detected", "touchdown_right_fz",
             "touchdown_sim_time", "touchdown_trajectory_time",
             "right_support_hold_active",
@@ -1814,7 +2166,10 @@ def log_columns():
             "pitch_balance_support_state",
             "left_pitch_balance_handoff_applied_deg",
             "right_pitch_balance_handoff_raw_deg",
+            "right_pitch_balance_handoff_target_deg",
             "right_pitch_balance_handoff_applied_deg",
+            "right_pitch_balance_handoff_rate_limited",
+            "right_pitch_balance_handoff_rate_limit_deg_s",
             "right_pitch_balance_support_sign",
             "right_pitch_balance_solver_success",
             "fore_aft_sign_test_enabled",
@@ -1850,7 +2205,8 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               fore_aft_sign_test_diagnostics=None,
               left_support_z_diagnostics=None,
               touchdown_flatten_diagnostics_row=None,
-              pitch_handoff_diagnostics=None):
+              pitch_handoff_diagnostics=None,
+              left_support_impact_anchor_diagnostics=None):
     desired_rpy = (
         np.full(3, math.nan) if solve_result is None
         else solve_result["desired_rpy"]
@@ -1949,6 +2305,14 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "settle_applied_m": 0.0,
         "air_world_z": math.nan, "target_world_z": math.nan,
         "blocked": 0.0, "false_contact_count": 0,
+        "post_settle_release_enabled": False,
+        "post_settle_release_state": "DISABLED",
+        "post_settle_release_start_time": math.nan,
+        "post_settle_release_beta": 0.0,
+        "blocked_before_release": 0.0,
+        "blocked_after_release": 0.0,
+        "target_before_release_world_z": math.nan,
+        "target_after_release_world_z": math.nan,
     }
     row.update({
         "touchdown_z_arrest_state": arrest["state"],
@@ -1970,6 +2334,30 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         ),
         "touchdown_z_arrest_settle_applied_m": finite_text(
             arrest["settle_applied_m"]
+        ),
+        "touchdown_z_arrest_post_settle_release_enabled": int(
+            arrest["post_settle_release_enabled"]
+        ),
+        "touchdown_z_arrest_post_settle_release_state": (
+            arrest["post_settle_release_state"]
+        ),
+        "touchdown_z_arrest_post_settle_release_start_time": finite_text(
+            arrest["post_settle_release_start_time"]
+        ),
+        "touchdown_z_arrest_post_settle_release_beta": finite_text(
+            arrest["post_settle_release_beta"]
+        ),
+        "touchdown_z_arrest_blocked_before_release_m": finite_text(
+            arrest["blocked_before_release"]
+        ),
+        "touchdown_z_arrest_blocked_after_release_m": finite_text(
+            arrest["blocked_after_release"]
+        ),
+        "touchdown_z_arrest_target_before_release_world_z_m": finite_text(
+            arrest["target_before_release_world_z"]
+        ),
+        "touchdown_z_arrest_target_after_release_world_z_m": finite_text(
+            arrest["target_after_release_world_z"]
         ),
         "right_air_world_z_desired_m": finite_text(arrest["air_world_z"]),
         "right_touchdown_world_z_target_m": finite_text(
@@ -2025,7 +2413,9 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "base_dx": math.nan, "base_vx": math.nan,
         "position_error": math.nan, "velocity_error": math.nan,
         "raw_offset": math.nan, "applied_offset": math.nan,
-        "beta": 0.0,
+        "beta": 0.0, "handoff_enabled": False,
+        "handoff_beta": 0.0, "handoff_state": "DISABLED",
+        "left_applied_offset": math.nan, "right_applied_offset": 0.0,
     }
     row.update({
         "lateral_balance_active": int(lateral_diagnostics["active"]),
@@ -2046,6 +2436,19 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
             lateral_diagnostics["applied_offset"]
         ),
         "lateral_balance_beta": finite_text(lateral_diagnostics["beta"]),
+        "lateral_balance_support_handoff_enabled": int(
+            lateral_diagnostics["handoff_enabled"]
+        ),
+        "lateral_balance_support_handoff_beta": finite_text(
+            lateral_diagnostics["handoff_beta"]
+        ),
+        "lateral_balance_support_state": lateral_diagnostics["handoff_state"],
+        "left_lateral_support_x_applied_offset_m": finite_text(
+            lateral_diagnostics["left_applied_offset"]
+        ),
+        "right_lateral_support_x_applied_offset_m": finite_text(
+            lateral_diagnostics["right_applied_offset"]
+        ),
         "left_lateral_solver_success": int(
             left_solve_result is not None
             and left_solve_result.get("lateral_balance_success", False)
@@ -2057,6 +2460,14 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "left_lateral_ik_pos_err_mm": finite_text(
             math.nan if left_solve_result is None
             else left_solve_result["ik_pos_err_mm"]
+        ),
+        "right_lateral_solver_success": int(
+            solve_result is not None
+            and solve_result.get("lateral_balance_success", False)
+        ),
+        "right_lateral_target_x_m": finite_text(
+            math.nan if solve_result is None
+            else solve_result["lateral_target_x"]
         ),
     })
     touchdown_diagnostics = touchdown_diagnostics or {
@@ -2154,8 +2565,9 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
     })
     pitch_handoff = pitch_handoff_diagnostics or {
         "enabled": False, "beta": 0.0, "state": "DISABLED",
-        "left_applied": 0.0, "right_raw": 0.0, "right_applied": 0.0,
-        "right_sign": 1,
+        "left_applied": 0.0, "right_raw": 0.0, "right_target": 0.0,
+        "right_applied": 0.0, "right_rate_limited": False,
+        "right_rate_limit_deg_s": None, "right_sign": 1,
     }
     row.update({
         "pitch_balance_support_handoff_enabled": int(
@@ -2171,13 +2583,62 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "right_pitch_balance_handoff_raw_deg": finite_text(
             math.degrees(pitch_handoff["right_raw"])
         ),
+        "right_pitch_balance_handoff_target_deg": finite_text(
+            math.degrees(pitch_handoff["right_target"])
+        ),
         "right_pitch_balance_handoff_applied_deg": finite_text(
             math.degrees(pitch_handoff["right_applied"])
+        ),
+        "right_pitch_balance_handoff_rate_limited": int(
+            pitch_handoff["right_rate_limited"]
+        ),
+        "right_pitch_balance_handoff_rate_limit_deg_s": finite_text(
+            math.nan
+            if pitch_handoff["right_rate_limit_deg_s"] is None
+            else pitch_handoff["right_rate_limit_deg_s"]
         ),
         "right_pitch_balance_support_sign": pitch_handoff["right_sign"],
         "right_pitch_balance_solver_success": int(
             solve_result is not None
             and solve_result.get("right_pitch_balance_success", False)
+        ),
+    })
+    impact_anchor = (
+        None if left_solve_result is None
+        else left_solve_result.get("left_support_impact_anchor")
+    ) or left_support_impact_anchor_diagnostics or {
+        "enabled": False, "state": "DISABLED", "beta": 0.0,
+        "anchor_world_x": math.nan, "anchor_world_yaw": math.nan,
+        "start_trajectory_time": math.nan,
+        "target_world_x_before": math.nan,
+        "target_world_x_after": math.nan,
+        "target_world_yaw_before": math.nan,
+        "target_world_yaw_after": math.nan,
+    }
+    row.update({
+        "left_support_impact_anchor_enabled": int(impact_anchor["enabled"]),
+        "left_support_impact_anchor_state": impact_anchor["state"],
+        "left_support_impact_anchor_beta": finite_text(impact_anchor["beta"]),
+        "left_support_impact_anchor_world_x_m": finite_text(
+            impact_anchor["anchor_world_x"]
+        ),
+        "left_support_impact_target_world_x_before_m": finite_text(
+            impact_anchor["target_world_x_before"]
+        ),
+        "left_support_impact_target_world_x_after_m": finite_text(
+            impact_anchor["target_world_x_after"]
+        ),
+        "left_support_impact_anchor_world_yaw_deg": finite_text(
+            math.degrees(impact_anchor["anchor_world_yaw"])
+        ),
+        "left_support_impact_target_world_yaw_before_deg": finite_text(
+            math.degrees(impact_anchor["target_world_yaw_before"])
+        ),
+        "left_support_impact_target_world_yaw_after_deg": finite_text(
+            math.degrees(impact_anchor["target_world_yaw_after"])
+        ),
+        "left_support_impact_anchor_start_trajectory_time": finite_text(
+            impact_anchor["start_trajectory_time"]
         ),
     })
     fore_aft = fore_aft_sign_test_diagnostics or {
@@ -2398,6 +2859,13 @@ def main():
             f"{args.lateral_balance_kd:.6f} "
             f"max-offset={args.lateral_balance_max_offset_m:.6f} m"
         )
+    if args.lateral_balance_support_handoff:
+        print(
+            "lateral-balance-support-handoff=enabled "
+            f"ramp={args.lateral_balance_support_handoff_ramp_s:.3f} sim-s"
+        )
+    else:
+        print("lateral-balance-support-handoff=disabled")
     if args.pitch_balance_start is None:
         print("pitch-balance=disabled")
     else:
@@ -2419,6 +2887,24 @@ def main():
         )
     else:
         print("pitch-balance-support-handoff=disabled")
+    if (
+        args.pitch_balance_support_handoff
+        and args.pitch_balance_right_rate_limit_deg_s is not None
+    ):
+        print(
+            "RIGHT-pitch-balance-handoff-rate-limit=enabled "
+            f"rate={args.pitch_balance_right_rate_limit_deg_s:.3f} deg/s"
+        )
+    else:
+        print("RIGHT-pitch-balance-handoff-rate-limit=disabled")
+    if args.left_support_impact_anchor:
+        print(
+            "LEFT-support-impact-anchor=enabled "
+            f"hold={args.left_support_impact_anchor_hold_s:.3f} s "
+            f"release={args.left_support_impact_anchor_release_s:.3f} s"
+        )
+    else:
+        print("LEFT-support-impact-anchor=disabled")
     if args.swing_world_z_leg is None:
         print("swing-world-Z=disabled")
     else:
@@ -2476,6 +2962,14 @@ def main():
         )
     else:
         print("touchdown-Z-arrest=disabled")
+    if args.touchdown_z_arrest_post_settle_release_s is None:
+        print("touchdown-Z-arrest-post-settle-release=disabled")
+    else:
+        print(
+            "touchdown-Z-arrest-post-settle-release=enabled "
+            f"duration={args.touchdown_z_arrest_post_settle_release_s:.3f} "
+            "sim-s"
+        )
     print(
         "LEFT-support-Z-hold="
         f"{'enabled' if args.left_support_z_hold_until_right_confirmed else 'disabled'} "
@@ -2527,7 +3021,10 @@ def main():
         TouchdownMeasurements(
             args.touchdown_right_contact_topic,
             args.touchdown_leg_joint_state_topic,
-            require_joint_state=args.touchdown_support_hold,
+            require_joint_state=(
+                args.touchdown_support_hold
+                or args.left_support_impact_anchor
+            ),
         )
         if args.touchdown_support_hold or args.touchdown_z_arrest else None
     )
@@ -2589,6 +3086,7 @@ def main():
                 args.dt,
                 args.touchdown_z_arrest_settle_depth_m,
                 args.touchdown_z_arrest_settle_speed_mps,
+                args.touchdown_z_arrest_post_settle_release_s,
             )
             if args.touchdown_z_arrest else None
         )
@@ -2598,6 +3096,12 @@ def main():
                 hold_through_replay=args.left_support_z_hold_through_replay,
             )
             if args.left_support_z_hold_until_right_confirmed else None
+        )
+        left_support_impact_anchor = LeftSupportImpactAnchor(
+            args.left_support_impact_anchor,
+            args.left_support_impact_anchor_hold_s,
+            args.left_support_impact_anchor_release_s,
+            chains["left"],
         )
         safety = CommandSafetyMonitor()
         safety.check(targets[0], start_sim_time)
@@ -2612,6 +3116,7 @@ def main():
         replay_base_pitch = None
         derivative_previous_pitch = None
         derivative_previous_time = None
+        previous_successful_right_pitch_correction = 0.0
         while True:
             (
                 sim_time, base_rotation, base_position, base_x, base_vx,
@@ -2707,6 +3212,7 @@ def main():
                         "applied_offset": lateral_offset,
                         "beta": lateral_beta,
                     }
+                lateral_controller_offset = lateral_offset
                 pitch_beta = feedback_beta(
                     "REPLAY", trajectory_time,
                     args.pitch_balance_start, args.pitch_balance_end,
@@ -2741,10 +3247,12 @@ def main():
                     }
                 right_fz = math.nan
                 measured_right_q = np.full(6, math.nan)
+                measured_left_q = np.full(6, math.nan)
                 touchdown_detected_now = False
                 if touchdown_measurements is not None:
                     (
                         right_fz, contact_sequence, measured_right_q,
+                        measured_left_q,
                     ) = touchdown_measurements.snapshot()
                     if touchdown_hold is not None:
                         touchdown_detected_now = touchdown_hold.update(
@@ -2757,6 +3265,21 @@ def main():
                             sim_time, trajectory_time, right_fz,
                             contact_sequence,
                         )
+                    left_support_impact_anchor.try_latch(
+                        touchdown_z_arrest, measured_left_q,
+                        base_rotation, base_position,
+                    )
+                left_support_impact_anchor_beta = (
+                    left_support_impact_anchor.beta(trajectory_time)
+                )
+                (
+                    lateral_handoff_beta,
+                    lateral_support_state,
+                ) = lateral_balance_support_handoff(
+                    trajectory_time, touchdown_z_arrest,
+                    args.lateral_balance_support_handoff,
+                    args.lateral_balance_support_handoff_ramp_s,
+                )
                 fore_aft_support_confirmed = (
                     touchdown_z_arrest is not None
                     and touchdown_z_arrest.state == "TOUCHDOWN_CONFIRMED"
@@ -2809,16 +3332,38 @@ def main():
                 right_pitch_clamped = max(
                     -right_pitch_max, min(right_pitch_max, right_pitch_raw)
                 )
-                right_pitch_correction = (
+                right_pitch_target = (
                     pitch_handoff_beta * right_pitch_clamped
                 )
+                right_pitch_rate_limit = (
+                    args.pitch_balance_right_rate_limit_deg_s
+                    if args.pitch_balance_support_handoff else None
+                )
+                (
+                    right_pitch_correction,
+                    right_pitch_rate_limited,
+                ) = propose_angular_rate_limited(
+                    right_pitch_target,
+                    previous_successful_right_pitch_correction,
+                    right_pitch_rate_limit,
+                    args.dt,
+                )
+                if (
+                    right_pitch_rate_limit is not None
+                    and right_pitch_target == 0.0
+                    and right_pitch_correction == 0.0
+                ):
+                    previous_successful_right_pitch_correction = 0.0
                 pitch_handoff_diagnostics = {
                     "enabled": args.pitch_balance_support_handoff,
                     "beta": pitch_handoff_beta,
                     "state": pitch_support_state,
                     "left_applied": left_pitch_correction,
                     "right_raw": right_pitch_raw,
+                    "right_target": right_pitch_target,
                     "right_applied": right_pitch_correction,
+                    "right_rate_limited": right_pitch_rate_limited,
+                    "right_rate_limit_deg_s": right_pitch_rate_limit,
                     "right_sign": args.pitch_balance_right_support_sign,
                 }
                 left_handoff_beta = 1.0
@@ -2835,6 +3380,49 @@ def main():
                         lateral_diagnostics["active"] = lateral_active
                         lateral_diagnostics["applied_offset"] = lateral_offset
                         lateral_diagnostics["beta"] = left_handoff_beta
+                lateral_handoff_source = (
+                    lateral_controller_offset
+                    if args.lateral_balance_support_handoff
+                    else lateral_offset
+                )
+                (
+                    left_lateral_offset,
+                    right_lateral_offset,
+                ) = split_lateral_support_offset(
+                    lateral_handoff_source,
+                    lateral_handoff_beta,
+                    args.lateral_balance_support_handoff,
+                )
+                if (
+                    lateral_diagnostics is None
+                    and args.lateral_balance_support_handoff
+                ):
+                    lateral_diagnostics = {
+                        "active": False,
+                        "planner_dx": math.nan, "planner_vx": math.nan,
+                        "base_dx": math.nan, "base_vx": math.nan,
+                        "position_error": math.nan,
+                        "velocity_error": math.nan,
+                        "raw_offset": math.nan,
+                        "applied_offset": lateral_controller_offset,
+                        "beta": lateral_beta,
+                    }
+                if lateral_diagnostics is not None:
+                    if args.lateral_balance_support_handoff:
+                        lateral_diagnostics["active"] = lateral_active
+                        lateral_diagnostics["applied_offset"] = (
+                            lateral_controller_offset
+                        )
+                        lateral_diagnostics["beta"] = lateral_beta
+                    lateral_diagnostics.update({
+                        "handoff_enabled": (
+                            args.lateral_balance_support_handoff
+                        ),
+                        "handoff_beta": lateral_handoff_beta,
+                        "handoff_state": lateral_support_state,
+                        "left_applied_offset": left_lateral_offset,
+                        "right_applied_offset": right_lateral_offset,
+                    })
                 solve_result = None
                 support_result = None
                 left_solve_result = None
@@ -2873,6 +3461,7 @@ def main():
                     or fore_aft_sign_test_enabled
                     or touchdown_flatten_enabled
                     or abs(right_pitch_correction) > 0.0
+                    or abs(right_lateral_offset) > 1e-12
                 ):
                     solve_result = right_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -2880,6 +3469,7 @@ def main():
                         leg_vector(nominal, "LL"),
                         right_world_beta, swing_world_z_beta,
                         chains["left"],
+                        support_x_offset=right_lateral_offset,
                         support_pitch_correction=right_pitch_correction,
                         support_pitch_is_right=True,
                         world_x_orientation_correction=(
@@ -2894,7 +3484,15 @@ def main():
                         ),
                         base_position=base_position,
                         touchdown_z_arrest=touchdown_z_arrest,
+                        support_z_trajectory_time=trajectory_time,
                     )
+                    if (
+                        solve_result["success"]
+                        and right_pitch_rate_limit is not None
+                    ):
+                        previous_successful_right_pitch_correction = (
+                            right_pitch_correction
+                        )
                     requested_q = solve_result["q"]
                     published_q = requested_q
                     limited_count = 0
@@ -2949,8 +3547,10 @@ def main():
                     }
 
                 if (
-                    left_world_beta > 0.0 or lateral_active or pitch_active
+                    left_world_beta > 0.0
+                    or abs(left_lateral_offset) > 1e-12 or pitch_active
                     or left_support_z_hold is not None
+                    or left_support_impact_anchor_beta > 0.0
                 ):
                     left_solve_result = left_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -2958,11 +3558,13 @@ def main():
                         leg_vector(nominal, "RL"),
                         left_world_beta, 0.0,
                         chains["right"],
-                        support_x_offset=lateral_offset,
+                        support_x_offset=left_lateral_offset,
                         support_pitch_correction=left_pitch_correction,
                         base_position=base_position,
                         support_z_hold=left_support_z_hold,
                         support_z_trajectory_time=trajectory_time,
+                        impact_anchor=left_support_impact_anchor,
+                        impact_anchor_trajectory_time=trajectory_time,
                     )
                     requested_q = left_solve_result["q"]
                     published_q = requested_q
@@ -3065,6 +3667,9 @@ def main():
                     ),
                     touchdown_flatten_diagnostics_row=flatten_diagnostics,
                     pitch_handoff_diagnostics=pitch_handoff_diagnostics,
+                    left_support_impact_anchor_diagnostics=(
+                        left_support_impact_anchor.diagnostics(trajectory_time)
+                    ),
                 )
                 stream.flush()
                 if touchdown_detected_now:
