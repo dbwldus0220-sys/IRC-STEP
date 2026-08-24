@@ -38,8 +38,10 @@ DEFAULT_HOLD_BEFORE = 1.0
 DEFAULT_REPLAY_END = 1.44
 DEFAULT_HOLD_AFTER = 1.0
 DEFAULT_ODOM_TOPIC = "/step/base_odometry"
+DEFAULT_LEFT_CONTACT_TOPIC = "/step/left_sole_contacts"
 DEFAULT_RIGHT_CONTACT_TOPIC = "/step/right_sole_contacts"
 DEFAULT_LEG_JOINT_STATE_TOPIC = "/step/leg_joint_states"
+LEFT_SOLE_COLLISION_NAME = "left_sole_box_collision"
 RIGHT_SOLE_COLLISION_NAME = "right_sole_box_collision"
 VELOCITY_WARNING_RAD_S = 4.71238898
 ORIENTATION_CACHE_EPS_RAD = 1e-6
@@ -213,6 +215,40 @@ def parse_args():
     )
     parser.add_argument(
         "--touchdown-z-arrest-post-settle-release-s", type=float,
+    )
+    parser.add_argument(
+        "--touchdown-z-arrest-post-settle-residual-ratio",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument("--left-touchdown-z-arrest", action="store_true")
+    parser.add_argument(
+        "--left-touchdown-z-arrest-threshold-n", type=float, default=20.0,
+    )
+    parser.add_argument(
+        "--left-touchdown-z-arrest-confirm-s", type=float, default=0.02,
+    )
+    parser.add_argument(
+        "--left-touchdown-z-arrest-unload-threshold-n",
+        type=float,
+        default=5.0,
+    )
+    parser.add_argument("--left-touchdown-z-arrest-start", type=float)
+    parser.add_argument("--left-swing-world-z", action="store_true")
+    parser.add_argument(
+        "--left-swing-world-z-start", type=float, default=1.68,
+    )
+    parser.add_argument(
+        "--left-swing-world-z-end", type=float, default=1.90,
+    )
+    parser.add_argument(
+        "--left-swing-world-z-ramp-in", type=float, default=0.08,
+    )
+    parser.add_argument(
+        "--left-swing-world-z-ramp-out", type=float, default=0.05,
+    )
+    parser.add_argument(
+        "--left-swing-world-z-max-correction-m", type=float, default=0.010,
     )
     parser.add_argument(
         "--left-support-z-hold-until-right-confirmed", action="store_true",
@@ -522,6 +558,80 @@ def parse_args():
                 "--touchdown-z-arrest-post-settle-release-s requires "
                 "positive touchdown settle depth and speed"
             )
+    if (
+        not math.isfinite(
+            args.touchdown_z_arrest_post_settle_residual_ratio
+        )
+        or not 0.0
+        <= args.touchdown_z_arrest_post_settle_residual_ratio
+        <= 1.0
+    ):
+        parser.error(
+            "--touchdown-z-arrest-post-settle-residual-ratio must be "
+            "finite and in [0.0, 1.0]"
+        )
+    left_touchdown_numeric = (
+        args.left_touchdown_z_arrest_threshold_n,
+        args.left_touchdown_z_arrest_confirm_s,
+        args.left_touchdown_z_arrest_unload_threshold_n,
+    )
+    if not all(math.isfinite(value) for value in left_touchdown_numeric):
+        parser.error("LEFT touchdown Z arrest arguments must be finite")
+    if args.left_touchdown_z_arrest_threshold_n <= 0.0:
+        parser.error(
+            "--left-touchdown-z-arrest-threshold-n must be positive"
+        )
+    if args.left_touchdown_z_arrest_confirm_s < 0.0:
+        parser.error(
+            "--left-touchdown-z-arrest-confirm-s must be non-negative"
+        )
+    if args.left_touchdown_z_arrest_unload_threshold_n < 0.0:
+        parser.error(
+            "--left-touchdown-z-arrest-unload-threshold-n must be "
+            "non-negative"
+        )
+    if (
+        args.left_touchdown_z_arrest_unload_threshold_n
+        >= args.left_touchdown_z_arrest_threshold_n
+    ):
+        parser.error(
+            "--left-touchdown-z-arrest-unload-threshold-n must be below "
+            "--left-touchdown-z-arrest-threshold-n"
+        )
+    if (
+        args.left_touchdown_z_arrest_start is not None
+        and (
+            not math.isfinite(args.left_touchdown_z_arrest_start)
+            or args.left_touchdown_z_arrest_start < 0.0
+        )
+    ):
+        parser.error(
+            "--left-touchdown-z-arrest-start must be finite and "
+            "non-negative"
+        )
+    left_swing_world_z_numeric = (
+        args.left_swing_world_z_start,
+        args.left_swing_world_z_end,
+        args.left_swing_world_z_ramp_in,
+        args.left_swing_world_z_ramp_out,
+        args.left_swing_world_z_max_correction_m,
+    )
+    if not all(math.isfinite(value) for value in left_swing_world_z_numeric):
+        parser.error("LEFT swing world-Z arguments must be finite")
+    if args.left_swing_world_z_end <= args.left_swing_world_z_start:
+        parser.error(
+            "--left-swing-world-z-end must be greater than "
+            "--left-swing-world-z-start"
+        )
+    if (
+        args.left_swing_world_z_ramp_in < 0.0
+        or args.left_swing_world_z_ramp_out < 0.0
+    ):
+        parser.error("LEFT swing world-Z ramps must be non-negative")
+    if args.left_swing_world_z_max_correction_m < 0.0:
+        parser.error(
+            "--left-swing-world-z-max-correction-m must be non-negative"
+        )
     if not 0.02 <= args.left_support_z_release_s <= 0.20:
         parser.error("--left-support-z-release-s must be in [0.02, 0.20]")
     if not math.isfinite(args.fore_aft_sign_test_ramp_in_s):
@@ -702,18 +812,26 @@ LEFT_JOINT_NAMES = tuple(
 
 
 class TouchdownMeasurements:
-    """Read right contact force and optional measured touchdown joints."""
+    """Read sole contact forces and optional measured touchdown joints."""
 
     def __init__(self, contact_topic, joint_state_topic,
-                 require_joint_state=True):
+                 require_joint_state=True, left_contact_topic=None):
         self.lock = threading.Lock()
         self.right_fz = math.nan
-        self.contact_sequence = 0
+        self.right_contact_sequence = 0
+        self.left_fz = math.nan
+        self.left_contact_sequence = 0
         self.joint_positions = {}
         self.node = Node()
         subscriptions = [
-            self.node.subscribe(Contacts, contact_topic, self.on_contacts),
+            self.node.subscribe(
+                Contacts, contact_topic, self.on_right_contacts,
+            ),
         ]
+        if left_contact_topic is not None:
+            subscriptions.append(self.node.subscribe(
+                Contacts, left_contact_topic, self.on_left_contacts,
+            ))
         if require_joint_state:
             subscriptions.append(self.node.subscribe(
                 Model, joint_state_topic, self.on_joint_state,
@@ -721,15 +839,16 @@ class TouchdownMeasurements:
         if not all(subscriptions):
             raise RuntimeError("failed to subscribe to touchdown measurements")
 
-    def on_contacts(self, message):
+    @staticmethod
+    def _contact_fz(message, sole_collision_name):
         total_fz = 0.0
         found = False
         for contact in message.contact:
             collision1_is_sole = (
-                RIGHT_SOLE_COLLISION_NAME in contact.collision1.name
+                sole_collision_name in contact.collision1.name
             )
             collision2_is_sole = (
-                RIGHT_SOLE_COLLISION_NAME in contact.collision2.name
+                sole_collision_name in contact.collision2.name
             )
             if not collision1_is_sole and not collision2_is_sole:
                 continue
@@ -740,9 +859,19 @@ class TouchdownMeasurements:
                     if collision1_is_sole else wrench.body_2_wrench.force
                 )
                 total_fz += float(force.z)
+        return total_fz if found else 0.0
+
+    def on_right_contacts(self, message):
+        right_fz = self._contact_fz(message, RIGHT_SOLE_COLLISION_NAME)
         with self.lock:
-            self.right_fz = total_fz if found else 0.0
-            self.contact_sequence += 1
+            self.right_fz = right_fz
+            self.right_contact_sequence += 1
+
+    def on_left_contacts(self, message):
+        left_fz = self._contact_fz(message, LEFT_SOLE_COLLISION_NAME)
+        with self.lock:
+            self.left_fz = left_fz
+            self.left_contact_sequence += 1
 
     def on_joint_state(self, message):
         positions = {}
@@ -762,7 +891,11 @@ class TouchdownMeasurements:
                 self.joint_positions.get(name, math.nan)
                 for name in LEFT_JOINT_NAMES
             ])
-            return self.right_fz, self.contact_sequence, right_q, left_q
+            return (
+                self.right_fz, self.right_contact_sequence,
+                self.left_fz, self.left_contact_sequence,
+                right_q, left_q,
+            )
 
 
 def load_targets(path):
@@ -847,12 +980,19 @@ def smoothstep(unit_value):
 
 
 def release_touchdown_downward_block(air_world_z, original_target_world_z,
-                                     release_beta):
+                                     release_beta, residual_ratio=0.0):
     blocked_before = max(0.0, original_target_world_z - air_world_z)
+    remaining_factor = 1.0 - release_beta * (1.0 - residual_ratio)
     if release_beta <= 0.0:
-        return original_target_world_z, blocked_before, blocked_before
-    blocked_after = (1.0 - release_beta) * blocked_before
-    return air_world_z + blocked_after, blocked_before, blocked_after
+        return (
+            original_target_world_z, blocked_before, blocked_before,
+            remaining_factor,
+        )
+    blocked_after = remaining_factor * blocked_before
+    return (
+        air_world_z + blocked_after, blocked_before, blocked_after,
+        remaining_factor,
+    )
 
 
 def feedback_beta(phase, trajectory_time, start, end, ramp_in, ramp_out):
@@ -1149,7 +1289,9 @@ class WorldFlatRightSolver:
               correction_release_active=False, base_position=None,
               touchdown_z_arrest=None, support_z_hold=None,
               support_z_trajectory_time=None, impact_anchor=None,
-              impact_anchor_trajectory_time=None):
+              impact_anchor_trajectory_time=None,
+              left_swing_world_z=None,
+              final_touchdown_z_arrest=None):
         if self._can_reuse(frame, base_rotation, simulation_time):
             return self.cached_result
 
@@ -1371,10 +1513,81 @@ class WorldFlatRightSolver:
                 )
                 impact_anchor_diagnostics.update(applied_diagnostics)
                 world_target_rotation = base_rotation @ target[:3, :3]
+        left_swing_z_diagnostics = None
+        if left_swing_world_z is not None:
+            if base_position is None:
+                raise RuntimeError(
+                    "LEFT swing world-Z correction requires base position"
+                )
+            predicted_world_z_before = (
+                base_position[2] + (base_rotation @ target[:3, 3])[2]
+            )
+            left_swing_z_diagnostics = left_swing_world_z.propose(
+                support_z_trajectory_time,
+                nominal_pose[2, 3],
+                predicted_world_z_before,
+            )
+            applied_correction = left_swing_z_diagnostics[
+                "applied_correction"
+            ]
+            if applied_correction > 0.0:
+                if abs(base_rotation[2, 2]) <= 1e-6:
+                    z_valid = False
+                    print(
+                        f"[WARNING] LEFT swing world-Z R22 too small at "
+                        f"frame {frame}; using the uncorrected target"
+                    )
+                else:
+                    corrected_world_z = (
+                        predicted_world_z_before + applied_correction
+                    )
+                    target[2, 3] = (
+                        corrected_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
+        final_arrest_diagnostics = None
+        if final_touchdown_z_arrest is not None:
+            if base_position is None:
+                raise RuntimeError(
+                    "final touchdown Z arrest requires base position"
+                )
+            if abs(base_rotation[2, 2]) <= 1e-6:
+                z_valid = False
+                print(
+                    f"[WARNING] final touchdown Z arrest R22 too small at "
+                    f"frame {frame}; using the air target"
+                )
+            else:
+                air_world_z = (
+                    base_position[2] + (base_rotation @ target[:3, 3])[2]
+                )
+                final_arrest_diagnostics = (
+                    final_touchdown_z_arrest.propose(
+                        air_world_z, support_z_trajectory_time
+                    )
+                )
+                target_world_z = final_arrest_diagnostics["target_world_z"]
+                if final_arrest_diagnostics["blocked"] > 0.0:
+                    target[2, 3] = (
+                        target_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
         target_relative = target[:3, 3] - left_position
         predicted_after_target = (base_rotation @ target_relative)[2]
 
-        if swing_world_z_beta > 0.0 and not z_valid and world_flat_beta <= 0.0:
+        if (
+            (
+                swing_world_z_beta > 0.0
+                or (
+                    left_swing_z_diagnostics is not None
+                    and left_swing_z_diagnostics["active"]
+                )
+            )
+            and not z_valid
+            and world_flat_beta <= 0.0
+        ):
             result = self._result(
                 nominal_q, False, nominal_pose, nominal_left_pose, target,
                 base_rotation, world_target_rotation, before_error,
@@ -1388,6 +1601,8 @@ class WorldFlatRightSolver:
             result["world_x_orientation_after"] = (
                 world_target_rotation.copy()
             )
+            result["left_swing_world_z"] = left_swing_z_diagnostics
+            result["left_swing_world_z_success"] = False
             self._cache(frame, simulation_time, base_rotation, result)
             return result
         seed = (
@@ -1433,6 +1648,10 @@ class WorldFlatRightSolver:
         result["world_flat_success"] = bool(valid and world_flat_beta > 0.0)
         result["swing_world_z_success"] = bool(
             valid and z_valid and swing_world_z_beta > 0.0
+        )
+        result["left_swing_world_z_success"] = bool(
+            valid and z_valid and left_swing_z_diagnostics is not None
+            and left_swing_z_diagnostics["active"]
         )
         result["lateral_balance_success"] = bool(
             valid and abs(support_x_offset) > 0.0
@@ -1482,11 +1701,29 @@ class WorldFlatRightSolver:
             touchdown_z_arrest.commit_successful_target(
                 arrest_diagnostics["target_world_z"]
             )
+        if valid and final_arrest_diagnostics is not None:
+            final_touchdown_z_arrest.commit_successful_target(
+                final_arrest_diagnostics["target_world_z"]
+            )
+        if valid and left_swing_z_diagnostics is not None:
+            solved_pose = self.chain.forward(candidate)
+            solved_actual_world_z = (
+                base_position[2]
+                + (base_rotation @ solved_pose[:3, 3])[2]
+            )
+            left_swing_world_z.commit_successful(
+                solved_actual_world_z, left_swing_z_diagnostics
+            )
         if valid and support_z_diagnostics is not None:
             support_z_hold.commit_successful_target(
                 support_z_diagnostics["final_world_z"]
             )
-        result["touchdown_z_arrest"] = arrest_diagnostics
+        result["touchdown_z_arrest"] = (
+            final_arrest_diagnostics
+            if final_arrest_diagnostics is not None
+            else arrest_diagnostics
+        )
+        result["left_swing_world_z"] = left_swing_z_diagnostics
         result["left_support_z_hold"] = support_z_diagnostics
         result["left_support_impact_anchor"] = impact_anchor_diagnostics
         self._cache(frame, simulation_time, base_rotation, result)
@@ -1605,7 +1842,8 @@ class TouchdownZArrest:
 
     def __init__(self, threshold_n, confirm_duration, arm_trajectory_time,
                  recovery_speed_mps, dt, settle_depth_m=0.0,
-                 settle_speed_mps=0.0, post_settle_release_s=None):
+                 settle_speed_mps=0.0, post_settle_release_s=None,
+                 post_settle_residual_ratio=0.0):
         self.threshold_n = threshold_n
         self.confirm_duration = confirm_duration
         self.arm_trajectory_time = arm_trajectory_time
@@ -1614,6 +1852,7 @@ class TouchdownZArrest:
         self.settle_depth_m = settle_depth_m
         self.settle_speed_mps = settle_speed_mps
         self.post_settle_release_s = post_settle_release_s
+        self.post_settle_residual_ratio = post_settle_residual_ratio
         self.state = "SWING"
         self.unloaded_once = False
         self.last_contact_sequence = None
@@ -1749,8 +1988,10 @@ class TouchdownZArrest:
             target,
             original_blocked,
             blocked_after_release,
+            remaining_factor,
         ) = release_touchdown_downward_block(
-            air_world_z, original_target, release_beta
+            air_world_z, original_target, release_beta,
+            self.post_settle_residual_ratio,
         )
         if self.post_settle_release_s is None:
             release_state = "DISABLED"
@@ -1777,6 +2018,8 @@ class TouchdownZArrest:
                 self.post_settle_release_start_time
             ),
             "post_settle_release_beta": release_beta,
+            "post_settle_residual_ratio": self.post_settle_residual_ratio,
+            "post_settle_remaining_factor": remaining_factor,
             "blocked_before_release": original_blocked,
             "blocked_after_release": blocked_after_release,
             "target_before_release_world_z": original_target,
@@ -1852,6 +2095,13 @@ class TouchdownZArrest:
             "post_settle_release_beta": target.get(
                 "post_settle_release_beta", 0.0
             ),
+            "post_settle_residual_ratio": target.get(
+                "post_settle_residual_ratio",
+                self.post_settle_residual_ratio,
+            ),
+            "post_settle_remaining_factor": target.get(
+                "post_settle_remaining_factor", 1.0
+            ),
             "blocked_before_release": target.get(
                 "blocked_before_release", 0.0
             ),
@@ -1863,6 +2113,193 @@ class TouchdownZArrest:
             ),
             "target_after_release_world_z": target.get(
                 "target_after_release_world_z", math.nan
+            ),
+        }
+
+
+class LeftSwingWorldZCorrection:
+    """Preserve the nominal LEFT swing-Z rise in the world frame."""
+
+    def __init__(self, start, end, ramp_in, ramp_out, max_correction):
+        self.start = start
+        self.end = end
+        self.ramp_in = ramp_in
+        self.ramp_out = ramp_out
+        self.max_correction = max_correction
+        self.reference_actual_world_z = None
+        self.reference_nominal_z = None
+
+    def beta(self, trajectory_time):
+        if trajectory_time < self.start or trajectory_time > self.end:
+            return 0.0
+        beta = 1.0
+        if self.ramp_in > 0.0 and trajectory_time < self.start + self.ramp_in:
+            beta = smoothstep(
+                (trajectory_time - self.start) / self.ramp_in
+            )
+        if self.ramp_out > 0.0 and trajectory_time > self.end - self.ramp_out:
+            beta = min(
+                beta,
+                smoothstep((self.end - trajectory_time) / self.ramp_out),
+            )
+        return beta
+
+    def propose(self, trajectory_time, nominal_z, predicted_world_z_before):
+        reference_actual = self.reference_actual_world_z
+        reference_nominal = self.reference_nominal_z
+        reference_pending = False
+        if (
+            reference_actual is None
+            and self.start <= trajectory_time <= self.end
+        ):
+            reference_actual = predicted_world_z_before
+            reference_nominal = nominal_z
+            reference_pending = True
+        beta = self.beta(trajectory_time)
+        if reference_actual is None or reference_nominal is None:
+            nominal_delta = 0.0
+            desired_world_z = predicted_world_z_before
+            raw_correction = 0.0
+        else:
+            nominal_delta = nominal_z - reference_nominal
+            desired_world_z = reference_actual + nominal_delta
+            raw_correction = desired_world_z - predicted_world_z_before
+        clamped_correction = max(
+            0.0, min(self.max_correction, raw_correction)
+        )
+        applied_correction = beta * clamped_correction
+        return {
+            "enabled": True,
+            "active": beta > 0.0,
+            "beta": beta,
+            "reference_actual_world_z": (
+                math.nan if reference_actual is None else reference_actual
+            ),
+            "reference_nominal_z": (
+                math.nan if reference_nominal is None else reference_nominal
+            ),
+            "reference_pending": reference_pending,
+            "nominal_delta_z": nominal_delta,
+            "desired_world_z": desired_world_z,
+            "predicted_world_z_before": predicted_world_z_before,
+            "predicted_world_z_after": (
+                predicted_world_z_before + applied_correction
+            ),
+            "raw_correction": raw_correction,
+            "clamped_correction": clamped_correction,
+            "applied_correction": applied_correction,
+        }
+
+    def commit_successful(self, solved_actual_world_z, diagnostics):
+        if diagnostics["reference_pending"]:
+            self.reference_actual_world_z = solved_actual_world_z
+            self.reference_nominal_z = diagnostics["reference_nominal_z"]
+
+
+class LeftTouchdownZArrest:
+    """Block only downward LEFT world-Z motion after swing re-contact."""
+
+    def __init__(self, threshold_n, confirm_duration, unload_threshold_n,
+                 start_time=None):
+        self.threshold_n = threshold_n
+        self.confirm_duration = confirm_duration
+        self.unload_threshold_n = unload_threshold_n
+        self.start_time = start_time
+        self.gate_open = start_time is None
+        self.state = "WAITING_FOR_UNLOAD"
+        self.unloaded_once = False
+        self.last_contact_sequence = None
+        self.candidate_started_at = None
+        self.first_crossing_time = math.nan
+        self.confirmed_time = math.nan
+        self.hold_world_z = None
+        self.previous_successful_world_z = None
+
+    def update_contact(self, sim_time, trajectory_time, left_fz,
+                       contact_sequence):
+        if not self.gate_open:
+            if trajectory_time < self.start_time:
+                self.last_contact_sequence = contact_sequence
+                return
+            self.gate_open = True
+        if contact_sequence == self.last_contact_sequence:
+            return
+        self.last_contact_sequence = contact_sequence
+        if not math.isfinite(left_fz):
+            return
+        if self.state == "WAITING_FOR_UNLOAD":
+            if left_fz < self.unload_threshold_n:
+                self.unloaded_once = True
+                self.state = "ARMED"
+            return
+        if self.state == "LEFT_TOUCHDOWN_CONFIRMED":
+            return
+        if left_fz < self.threshold_n:
+            if self.state == "CONTACT_CANDIDATE":
+                self.state = "ARMED"
+                self.candidate_started_at = None
+                self.first_crossing_time = math.nan
+            return
+        if self.state == "ARMED":
+            if self.previous_successful_world_z is None:
+                return
+            self.state = "CONTACT_CANDIDATE"
+            self.candidate_started_at = sim_time
+            self.first_crossing_time = trajectory_time
+        if (
+            self.state == "CONTACT_CANDIDATE"
+            and sim_time - self.candidate_started_at + 1e-12
+            >= self.confirm_duration
+        ):
+            self.hold_world_z = self.previous_successful_world_z
+            self.state = "LEFT_TOUCHDOWN_CONFIRMED"
+            self.confirmed_time = trajectory_time
+
+    def propose(self, air_world_z, _trajectory_time):
+        if (
+            self.state == "LEFT_TOUCHDOWN_CONFIRMED"
+            and self.hold_world_z is not None
+        ):
+            target_world_z = max(air_world_z, self.hold_world_z)
+        else:
+            target_world_z = air_world_z
+        return {
+            "state": self.state,
+            "active": self.state == "LEFT_TOUCHDOWN_CONFIRMED",
+            "air_world_z": air_world_z,
+            "target_world_z": target_world_z,
+            "blocked": max(0.0, target_world_z - air_world_z),
+            "hold_world_z": (
+                math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+        }
+
+    def commit_successful_target(self, target_world_z):
+        self.previous_successful_world_z = target_world_z
+
+    def diagnostics(self, left_fz, solve_result):
+        target = (
+            None if solve_result is None
+            else solve_result.get("touchdown_z_arrest")
+        ) or {}
+        return {
+            "state": self.state,
+            "left_fz": left_fz,
+            "start_time": (
+                math.nan if self.start_time is None else self.start_time
+            ),
+            "gate_open": self.gate_open,
+            "unloaded_once": self.unloaded_once,
+            "first_crossing_time": self.first_crossing_time,
+            "confirmed_time": self.confirmed_time,
+            "hold_world_z": (
+                math.nan if self.hold_world_z is None else self.hold_world_z
+            ),
+            "air_world_z": target.get("air_world_z", math.nan),
+            "target_world_z": target.get("target_world_z", math.nan),
+            "blocked": target.get("blocked", 0.0),
+            "solver_success": bool(
+                solve_result is not None and solve_result.get("success", False)
             ),
         }
 
@@ -2076,6 +2513,8 @@ def log_columns():
             "touchdown_z_arrest_post_settle_release_state",
             "touchdown_z_arrest_post_settle_release_start_time",
             "touchdown_z_arrest_post_settle_release_beta",
+            "touchdown_z_arrest_post_settle_residual_ratio",
+            "touchdown_z_arrest_post_settle_remaining_factor",
             "touchdown_z_arrest_blocked_before_release_m",
             "touchdown_z_arrest_blocked_after_release_m",
             "touchdown_z_arrest_target_before_release_world_z_m",
@@ -2084,6 +2523,32 @@ def log_columns():
             "right_touchdown_world_z_target_m",
             "right_world_z_downward_blocked_m",
             "touchdown_z_arrest_false_contact_count",
+            "left_touchdown_z_arrest_enabled",
+            "left_touchdown_z_arrest_state",
+            "left_touchdown_z_arrest_left_contact_fz",
+            "left_touchdown_z_arrest_start_time",
+            "left_touchdown_z_arrest_gate_open",
+            "left_touchdown_z_arrest_unloaded_once",
+            "left_touchdown_z_arrest_first_crossing_time",
+            "left_touchdown_z_arrest_confirmed_time",
+            "left_touchdown_z_arrest_hold_world_z_m",
+            "left_air_world_z_desired_m",
+            "left_touchdown_world_z_target_m",
+            "left_world_z_downward_blocked_m",
+            "left_touchdown_z_arrest_solver_success",
+            "left_swing_world_z_enabled",
+            "left_swing_world_z_active",
+            "left_swing_world_z_beta",
+            "left_swing_world_z_reference_actual_world_z_m",
+            "left_swing_world_z_reference_nominal_z_m",
+            "left_swing_world_z_nominal_delta_z_m",
+            "left_swing_world_z_desired_world_z_m",
+            "left_swing_world_z_predicted_world_z_before_m",
+            "left_swing_world_z_predicted_world_z_after_m",
+            "left_swing_world_z_raw_correction_m",
+            "left_swing_world_z_clamped_correction_m",
+            "left_swing_world_z_applied_correction_m",
+            "left_swing_world_z_solver_success",
             "left_support_z_hold_enabled", "left_support_z_hold_active",
             "left_support_z_hold_world_z",
             "left_support_z_release_active", "left_support_z_release_beta",
@@ -2202,6 +2667,8 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               left_solve_result=None, left_rate_diagnostics=None,
               lateral_diagnostics=None, touchdown_diagnostics=None,
               pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None,
+              left_touchdown_z_arrest_diagnostics=None,
+              left_swing_world_z_diagnostics=None,
               fore_aft_sign_test_diagnostics=None,
               left_support_z_diagnostics=None,
               touchdown_flatten_diagnostics_row=None,
@@ -2309,6 +2776,8 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "post_settle_release_state": "DISABLED",
         "post_settle_release_start_time": math.nan,
         "post_settle_release_beta": 0.0,
+        "post_settle_residual_ratio": 0.0,
+        "post_settle_remaining_factor": 1.0,
         "blocked_before_release": 0.0,
         "blocked_after_release": 0.0,
         "target_before_release_world_z": math.nan,
@@ -2347,6 +2816,12 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "touchdown_z_arrest_post_settle_release_beta": finite_text(
             arrest["post_settle_release_beta"]
         ),
+        "touchdown_z_arrest_post_settle_residual_ratio": finite_text(
+            arrest["post_settle_residual_ratio"]
+        ),
+        "touchdown_z_arrest_post_settle_remaining_factor": finite_text(
+            arrest["post_settle_remaining_factor"]
+        ),
         "touchdown_z_arrest_blocked_before_release_m": finite_text(
             arrest["blocked_before_release"]
         ),
@@ -2365,6 +2840,98 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         ),
         "right_world_z_downward_blocked_m": finite_text(arrest["blocked"]),
         "touchdown_z_arrest_false_contact_count": arrest["false_contact_count"],
+    })
+    left_arrest = left_touchdown_z_arrest_diagnostics or {
+        "state": "DISABLED", "left_fz": math.nan,
+        "start_time": math.nan, "gate_open": False,
+        "unloaded_once": False, "first_crossing_time": math.nan,
+        "confirmed_time": math.nan, "hold_world_z": math.nan,
+        "air_world_z": math.nan, "target_world_z": math.nan,
+        "blocked": 0.0, "solver_success": False,
+    }
+    row.update({
+        "left_touchdown_z_arrest_enabled": int(
+            left_touchdown_z_arrest_diagnostics is not None
+        ),
+        "left_touchdown_z_arrest_state": left_arrest["state"],
+        "left_touchdown_z_arrest_left_contact_fz": finite_text(
+            left_arrest["left_fz"]
+        ),
+        "left_touchdown_z_arrest_start_time": finite_text(
+            left_arrest["start_time"]
+        ),
+        "left_touchdown_z_arrest_gate_open": int(
+            left_arrest["gate_open"]
+        ),
+        "left_touchdown_z_arrest_unloaded_once": int(
+            left_arrest["unloaded_once"]
+        ),
+        "left_touchdown_z_arrest_first_crossing_time": finite_text(
+            left_arrest["first_crossing_time"]
+        ),
+        "left_touchdown_z_arrest_confirmed_time": finite_text(
+            left_arrest["confirmed_time"]
+        ),
+        "left_touchdown_z_arrest_hold_world_z_m": finite_text(
+            left_arrest["hold_world_z"]
+        ),
+        "left_air_world_z_desired_m": finite_text(
+            left_arrest["air_world_z"]
+        ),
+        "left_touchdown_world_z_target_m": finite_text(
+            left_arrest["target_world_z"]
+        ),
+        "left_world_z_downward_blocked_m": finite_text(
+            left_arrest["blocked"]
+        ),
+        "left_touchdown_z_arrest_solver_success": int(
+            left_arrest["solver_success"]
+        ),
+    })
+    left_swing_z = left_swing_world_z_diagnostics or {
+        "enabled": False, "active": False, "beta": 0.0,
+        "reference_actual_world_z": math.nan,
+        "reference_nominal_z": math.nan, "nominal_delta_z": 0.0,
+        "desired_world_z": math.nan,
+        "predicted_world_z_before": math.nan,
+        "predicted_world_z_after": math.nan,
+        "raw_correction": 0.0, "clamped_correction": 0.0,
+        "applied_correction": 0.0, "solver_success": False,
+    }
+    row.update({
+        "left_swing_world_z_enabled": int(left_swing_z["enabled"]),
+        "left_swing_world_z_active": int(left_swing_z["active"]),
+        "left_swing_world_z_beta": finite_text(left_swing_z["beta"]),
+        "left_swing_world_z_reference_actual_world_z_m": finite_text(
+            left_swing_z["reference_actual_world_z"]
+        ),
+        "left_swing_world_z_reference_nominal_z_m": finite_text(
+            left_swing_z["reference_nominal_z"]
+        ),
+        "left_swing_world_z_nominal_delta_z_m": finite_text(
+            left_swing_z["nominal_delta_z"]
+        ),
+        "left_swing_world_z_desired_world_z_m": finite_text(
+            left_swing_z["desired_world_z"]
+        ),
+        "left_swing_world_z_predicted_world_z_before_m": finite_text(
+            left_swing_z["predicted_world_z_before"]
+        ),
+        "left_swing_world_z_predicted_world_z_after_m": finite_text(
+            left_swing_z["predicted_world_z_after"]
+        ),
+        "left_swing_world_z_raw_correction_m": finite_text(
+            left_swing_z["raw_correction"]
+        ),
+        "left_swing_world_z_clamped_correction_m": finite_text(
+            left_swing_z["clamped_correction"]
+        ),
+        "left_swing_world_z_applied_correction_m": finite_text(
+            left_swing_z["applied_correction"]
+        ),
+        "left_swing_world_z_solver_success": int(
+            left_swing_z["solver_success"]
+        ),
     })
     support_z = left_support_z_diagnostics or {
         "enabled": False, "active": False, "hold_world_z": math.nan,
@@ -2968,8 +3535,39 @@ def main():
         print(
             "touchdown-Z-arrest-post-settle-release=enabled "
             f"duration={args.touchdown_z_arrest_post_settle_release_s:.3f} "
-            "sim-s"
+            "sim-s "
+            "residual-ratio="
+            f"{args.touchdown_z_arrest_post_settle_residual_ratio:.3f}"
         )
+    if args.left_touchdown_z_arrest:
+        left_arrest_start = (
+            "immediate"
+            if args.left_touchdown_z_arrest_start is None
+            else f"{args.left_touchdown_z_arrest_start:.3f} sim-s"
+        )
+        print(
+            "left-touchdown-Z-arrest=enabled "
+            f"start={left_arrest_start} "
+            f"threshold={args.left_touchdown_z_arrest_threshold_n:.1f} N "
+            f"confirm={args.left_touchdown_z_arrest_confirm_s:.3f} sim-s "
+            "unload-threshold="
+            f"{args.left_touchdown_z_arrest_unload_threshold_n:.1f} N "
+            "settle=disabled"
+        )
+    else:
+        print("left-touchdown-Z-arrest=disabled")
+    if args.left_swing_world_z:
+        print(
+            "left-swing-world-Z=enabled "
+            f"start={args.left_swing_world_z_start:.3f} "
+            f"end={args.left_swing_world_z_end:.3f} "
+            f"ramp-in={args.left_swing_world_z_ramp_in:.3f} "
+            f"ramp-out={args.left_swing_world_z_ramp_out:.3f} "
+            "max-correction="
+            f"{1000.0 * args.left_swing_world_z_max_correction_m:.1f} mm"
+        )
+    else:
+        print("left-swing-world-Z=disabled")
     print(
         "LEFT-support-Z-hold="
         f"{'enabled' if args.left_support_z_hold_until_right_confirmed else 'disabled'} "
@@ -3025,8 +3623,16 @@ def main():
                 args.touchdown_support_hold
                 or args.left_support_impact_anchor
             ),
+            left_contact_topic=(
+                DEFAULT_LEFT_CONTACT_TOPIC
+                if args.left_touchdown_z_arrest else None
+            ),
         )
-        if args.touchdown_support_hold or args.touchdown_z_arrest else None
+        if (
+            args.touchdown_support_hold
+            or args.touchdown_z_arrest
+            or args.left_touchdown_z_arrest
+        ) else None
     )
 
     with args.command_log.open("w", newline="", encoding="utf-8") as stream:
@@ -3087,8 +3693,28 @@ def main():
                 args.touchdown_z_arrest_settle_depth_m,
                 args.touchdown_z_arrest_settle_speed_mps,
                 args.touchdown_z_arrest_post_settle_release_s,
+                args.touchdown_z_arrest_post_settle_residual_ratio,
             )
             if args.touchdown_z_arrest else None
+        )
+        left_touchdown_z_arrest = (
+            LeftTouchdownZArrest(
+                args.left_touchdown_z_arrest_threshold_n,
+                args.left_touchdown_z_arrest_confirm_s,
+                args.left_touchdown_z_arrest_unload_threshold_n,
+                args.left_touchdown_z_arrest_start,
+            )
+            if args.left_touchdown_z_arrest else None
+        )
+        left_swing_world_z = (
+            LeftSwingWorldZCorrection(
+                args.left_swing_world_z_start,
+                args.left_swing_world_z_end,
+                args.left_swing_world_z_ramp_in,
+                args.left_swing_world_z_ramp_out,
+                args.left_swing_world_z_max_correction_m,
+            )
+            if args.left_swing_world_z else None
         )
         left_support_z_hold = (
             LeftSupportZHold(
@@ -3246,13 +3872,15 @@ def main():
                         "beta": pitch_beta,
                     }
                 right_fz = math.nan
+                left_fz = math.nan
                 measured_right_q = np.full(6, math.nan)
                 measured_left_q = np.full(6, math.nan)
                 touchdown_detected_now = False
                 if touchdown_measurements is not None:
                     (
-                        right_fz, contact_sequence, measured_right_q,
-                        measured_left_q,
+                        right_fz, contact_sequence,
+                        left_fz, left_contact_sequence,
+                        measured_right_q, measured_left_q,
                     ) = touchdown_measurements.snapshot()
                     if touchdown_hold is not None:
                         touchdown_detected_now = touchdown_hold.update(
@@ -3264,6 +3892,11 @@ def main():
                         touchdown_z_arrest.update_contact(
                             sim_time, trajectory_time, right_fz,
                             contact_sequence,
+                        )
+                    if left_touchdown_z_arrest is not None:
+                        left_touchdown_z_arrest.update_contact(
+                            sim_time, trajectory_time, left_fz,
+                            left_contact_sequence,
                         )
                     left_support_impact_anchor.try_latch(
                         touchdown_z_arrest, measured_left_q,
@@ -3551,6 +4184,8 @@ def main():
                     or abs(left_lateral_offset) > 1e-12 or pitch_active
                     or left_support_z_hold is not None
                     or left_support_impact_anchor_beta > 0.0
+                    or left_touchdown_z_arrest is not None
+                    or left_swing_world_z is not None
                 ):
                     left_solve_result = left_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -3565,6 +4200,10 @@ def main():
                         support_z_trajectory_time=trajectory_time,
                         impact_anchor=left_support_impact_anchor,
                         impact_anchor_trajectory_time=trajectory_time,
+                        left_swing_world_z=left_swing_world_z,
+                        final_touchdown_z_arrest=(
+                            left_touchdown_z_arrest
+                        ),
                     )
                     requested_q = left_solve_result["q"]
                     published_q = requested_q
@@ -3660,6 +4299,26 @@ def main():
                             right_fz, solve_result
                         )
                     ),
+                    left_touchdown_z_arrest_diagnostics=(
+                        None if left_touchdown_z_arrest is None
+                        else left_touchdown_z_arrest.diagnostics(
+                            left_fz, left_solve_result
+                        )
+                    ),
+                    left_swing_world_z_diagnostics=(
+                        None
+                        if (
+                            left_solve_result is None
+                            or left_solve_result.get("left_swing_world_z")
+                            is None
+                        )
+                        else {
+                            **left_solve_result["left_swing_world_z"],
+                            "solver_success": left_solve_result.get(
+                                "left_swing_world_z_success", False
+                            ),
+                        }
+                    ),
                     fore_aft_sign_test_diagnostics=fore_aft_diagnostics,
                     left_support_z_diagnostics=(
                         None if left_solve_result is None
@@ -3747,6 +4406,12 @@ def main():
                         None if touchdown_z_arrest is None
                         else touchdown_z_arrest.diagnostics(
                             math.nan, solve_result
+                        )
+                    ),
+                    left_touchdown_z_arrest_diagnostics=(
+                        None if left_touchdown_z_arrest is None
+                        else left_touchdown_z_arrest.diagnostics(
+                            math.nan, None
                         )
                     ),
                 )
