@@ -43,6 +43,7 @@ from log_free_base_com_balance import (
     load_sole_boxes,
     print_initial_geometry,
     print_initial_summary,
+    quaternion_to_rpy,
 )
 
 
@@ -55,6 +56,49 @@ CSV_COLUMNS = (
     "simulation_time",
     "simulation_elapsed",
     *LEGACY_CSV_COLUMNS,
+
+    # Foot-link world pose.
+    "left_foot_world_x",
+    "left_foot_world_y",
+    "left_foot_world_z",
+    "left_foot_world_yaw",
+    "right_foot_world_x",
+    "right_foot_world_y",
+    "right_foot_world_z",
+    "right_foot_world_yaw",
+
+    # Actual sole collision-box world pose.
+    "left_sole_world_x",
+    "left_sole_world_y",
+    "left_sole_world_z",
+    "left_sole_world_yaw",
+    "right_sole_world_x",
+    "right_sole_world_y",
+    "right_sole_world_z",
+    "right_sole_world_yaw",
+
+    # Contact yaw diagnostics.
+    #
+    # raw_contact_tau_z:
+    #   torque.z reported directly by Gazebo's contact wrench.
+    #
+    # force_mz_about_*:
+    #   moment-arm contribution rx*Fy - ry*Fx, computed separately
+    #   so we do not assume the reference point of raw torque.z.
+    "left_contact_tau_z_raw",
+    "right_contact_tau_z_raw",
+    "net_contact_tau_z_raw",
+
+    "left_force_mz_about_com",
+    "right_force_mz_about_com",
+    "net_force_mz_about_com",
+
+    "left_force_mz_about_base",
+    "right_force_mz_about_base",
+    "net_force_mz_about_base",
+
+    "left_contact_pair_count",
+    "right_contact_pair_count",
 )
 
 _SYMBOLS = symbol_database.Default()
@@ -75,6 +119,69 @@ for _message_class in (
     odometry_pb2.Odometry,
 ):
     _SYMBOLS.RegisterMessage(_message_class)
+
+
+def contact_yaw_moment_diagnostics(contact_state, com_xy, base_xy):
+    """Return raw contact tau_z and r x F yaw moments.
+
+    The raw Gazebo torque and moment-arm contribution are intentionally
+    kept separate. We do not assume here that body_wrench.torque uses
+    the contact point as its reference point.
+    """
+
+    torque = contact_state.get(
+        "torque",
+        (math.nan, math.nan, math.nan),
+    )
+
+    raw_tau_z = (
+        torque[2]
+        if len(torque) >= 3 and math.isfinite(torque[2])
+        else math.nan
+    )
+
+    mz_com = 0.0
+    mz_base = 0.0
+    pair_count = 0
+
+    for position, force, _raw_torque in contact_state.get(
+        "samples",
+        (),
+    ):
+        px, py, _pz = position
+        fx, fy, _fz = force
+
+        values = (
+            px,
+            py,
+            fx,
+            fy,
+            com_xy[0],
+            com_xy[1],
+            base_xy[0],
+            base_xy[1],
+        )
+
+        if not all(math.isfinite(value) for value in values):
+            continue
+
+        mz_com += (
+            (px - com_xy[0]) * fy
+            - (py - com_xy[1]) * fx
+        )
+
+        mz_base += (
+            (px - base_xy[0]) * fy
+            - (py - base_xy[1]) * fx
+        )
+
+        pair_count += 1
+
+    if pair_count == 0:
+        mz_com = math.nan
+        mz_base = math.nan
+
+    return raw_tau_z, mz_com, mz_base, pair_count
 
 
 def parse_args():
@@ -223,6 +330,107 @@ def main():
                     print(f"[ERROR] {error}")
                     return 1
 
+                diagnostics = build_geometry_diagnostics(
+                    link_poses,
+                    inertials,
+                    sole_boxes,
+                    args.model_name,
+                    (row[1], row[2]),
+                )
+
+                world_link_poses = diagnostics["world_link_poses"]
+
+                left_link_name = sole_boxes["left"]["link_name"]
+                right_link_name = sole_boxes["right"]["link_name"]
+
+                left_foot_position, left_foot_quaternion = (
+                    world_link_poses[left_link_name]
+                )
+                right_foot_position, right_foot_quaternion = (
+                    world_link_poses[right_link_name]
+                )
+
+                left_foot_rpy = quaternion_to_rpy(
+                    left_foot_quaternion
+                )
+                right_foot_rpy = quaternion_to_rpy(
+                    right_foot_quaternion
+                )
+
+                left_sole_position, left_sole_quaternion = (
+                    diagnostics["sole_geometry"]["left"]["pose"]
+                )
+                right_sole_position, right_sole_quaternion = (
+                    diagnostics["sole_geometry"]["right"]["pose"]
+                )
+
+                left_sole_rpy = quaternion_to_rpy(
+                    left_sole_quaternion
+                )
+                right_sole_rpy = quaternion_to_rpy(
+                    right_sole_quaternion
+                )
+
+                com_xy = (
+                    row[1],
+                    row[2],
+                )
+
+                base_position = (
+                    world_link_poses["base_link"][0]
+                )
+
+                base_xy = (
+                    base_position[0],
+                    base_position[1],
+                )
+
+                (
+                    left_tau_z_raw,
+                    left_mz_com,
+                    left_mz_base,
+                    left_pair_count,
+                ) = contact_yaw_moment_diagnostics(
+                    contacts["left"],
+                    com_xy,
+                    base_xy,
+                )
+
+                (
+                    right_tau_z_raw,
+                    right_mz_com,
+                    right_mz_base,
+                    right_pair_count,
+                ) = contact_yaw_moment_diagnostics(
+                    contacts["right"],
+                    com_xy,
+                    base_xy,
+                )
+
+                def finite_sum(a, b):
+                    if math.isfinite(a) and math.isfinite(b):
+                        return a + b
+                    if math.isfinite(a):
+                        return a
+                    if math.isfinite(b):
+                        return b
+                    return math.nan
+
+                net_tau_z_raw = finite_sum(
+                    left_tau_z_raw,
+                    right_tau_z_raw,
+                )
+
+                net_mz_com = finite_sum(
+                    left_mz_com,
+                    right_mz_com,
+                )
+
+                net_mz_base = finite_sum(
+                    left_mz_base,
+                    right_mz_base,
+                )
+
                 source_sim_time = pose_time - pose_start_time
                 legacy_complete_row = complete_row_with_runtime_fields(
                     row, source_sim_time, pose_updated
@@ -231,6 +439,31 @@ def main():
                     simulation_time,
                     simulation_elapsed,
                     *legacy_complete_row,
+
+                    *left_foot_position,
+                    left_foot_rpy[2],
+                    *right_foot_position,
+                    right_foot_rpy[2],
+
+                    *left_sole_position,
+                    left_sole_rpy[2],
+                    *right_sole_position,
+                    right_sole_rpy[2],
+
+                    left_tau_z_raw,
+                    right_tau_z_raw,
+                    net_tau_z_raw,
+
+                    left_mz_com,
+                    right_mz_com,
+                    net_mz_com,
+
+                    left_mz_base,
+                    right_mz_base,
+                    net_mz_base,
+
+                    left_pair_count,
+                    right_pair_count,
                 )
                 writer.writerow(complete_row)
                 output_file.flush()
@@ -240,13 +473,6 @@ def main():
                 if simulation_elapsed <= 0.25 + 1e-9:
                     initial_summary_rows.append(legacy_dict)
 
-                diagnostics = build_geometry_diagnostics(
-                    link_poses,
-                    inertials,
-                    sole_boxes,
-                    args.model_name,
-                    (row[1], row[2]),
-                )
                 if not printed_initial_geometry:
                     print_initial_geometry(
                         diagnostics, sole_boxes, (row[1], row[2])

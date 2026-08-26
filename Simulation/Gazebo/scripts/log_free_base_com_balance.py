@@ -544,35 +544,80 @@ def empty_contact_state():
     return {
         "points": (),
         "force": (math.nan, math.nan, math.nan),
+        "torque": (math.nan, math.nan, math.nan),
+        "samples": (),
         "timestamp": None,
     }
 
 
 def extract_contact_state(message, sole_collision_name: str):
     points = []
+    samples = []
+
     total_force = [0.0, 0.0, 0.0]
+    total_torque = [0.0, 0.0, 0.0]
+
     for contact in message.contact:
         collision1_is_sole = sole_collision_name in contact.collision1.name
         collision2_is_sole = sole_collision_name in contact.collision2.name
+
         if not collision1_is_sole and not collision2_is_sole:
             continue
 
-        points.extend(
+        contact_positions = [
             (position.x, position.y, position.z)
             for position in contact.position
-        )
-        for wrench in contact.wrench:
-            force = (
-                wrench.body_1_wrench.force
+        ]
+
+        points.extend(contact_positions)
+
+        for index, wrench in enumerate(contact.wrench):
+            body_wrench = (
+                wrench.body_1_wrench
                 if collision1_is_sole
-                else wrench.body_2_wrench.force
+                else wrench.body_2_wrench
             )
+
+            force = body_wrench.force
+            torque = body_wrench.torque
+
+            force_tuple = (
+                force.x,
+                force.y,
+                force.z,
+            )
+
+            torque_tuple = (
+                torque.x,
+                torque.y,
+                torque.z,
+            )
+
             total_force[0] += force.x
             total_force[1] += force.y
             total_force[2] += force.z
+
+            total_torque[0] += torque.x
+            total_torque[1] += torque.y
+            total_torque[2] += torque.z
+
+            # Gazebo contact positions and wrenches normally correspond
+            # by index. Only create an r x F sample when a matching
+            # contact position is actually available.
+            if index < len(contact_positions):
+                samples.append(
+                    (
+                        contact_positions[index],
+                        force_tuple,
+                        torque_tuple,
+                    )
+                )
+
     return {
         "points": tuple(points),
         "force": tuple(total_force),
+        "torque": tuple(total_torque),
+        "samples": tuple(samples),
         "timestamp": message_time_seconds(message),
     }
 
@@ -644,6 +689,16 @@ class BalanceStateSubscriber:
                 side: {
                     "points": tuple(state["points"]),
                     "force": tuple(state["force"]),
+                    "torque": tuple(state["torque"]),
+                    "samples": tuple(
+                        (
+                            tuple(position),
+                            tuple(force),
+                            tuple(torque),
+                        )
+                        for position, force, torque
+                        in state["samples"]
+                    ),
                     "timestamp": state["timestamp"],
                 }
                 for side, state in self.contact_states.items()
