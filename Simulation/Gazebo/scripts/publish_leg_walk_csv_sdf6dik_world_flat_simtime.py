@@ -200,6 +200,14 @@ def parse_args():
         help="arrest downward RIGHT world-Z target at first contact",
     )
     parser.add_argument(
+        "--touchdown-z-arrest-detect-only",
+        action="store_true",
+        help=(
+            "run RIGHT touchdown-Z arrest detection and diagnostics without "
+            "applying its world-Z target modification"
+        ),
+    )
+    parser.add_argument(
         "--touchdown-z-arrest-threshold-n", type=float, default=20.0,
     )
     parser.add_argument(
@@ -221,6 +229,15 @@ def parse_args():
         type=float,
         default=0.0,
     )
+    parser.add_argument(
+        "--touchdown-z-arrest-start",
+        type=float,
+        default=None,
+        help=(
+            "RIGHT touchdown-Z-arrest detector arm trajectory time. "
+            "Defaults to --swing-world-z-start for backward compatibility."
+        ),
+    )
     parser.add_argument("--left-touchdown-z-arrest", action="store_true")
     parser.add_argument(
         "--left-touchdown-z-arrest-threshold-n", type=float, default=20.0,
@@ -234,6 +251,18 @@ def parse_args():
         default=5.0,
     )
     parser.add_argument("--left-touchdown-z-arrest-start", type=float)
+    parser.add_argument(
+        "--left-touchdown-approach-z-rate-limit", action="store_true",
+        help=(
+            "limit only downward LEFT world-Z target speed before confirmed "
+            "touchdown"
+        ),
+    )
+    parser.add_argument("--left-touchdown-approach-z-start", type=float)
+    parser.add_argument("--left-touchdown-approach-z-end", type=float)
+    parser.add_argument(
+        "--left-touchdown-approach-z-max-down-speed-mps", type=float,
+    )
     parser.add_argument("--left-swing-world-z", action="store_true")
     parser.add_argument(
         "--left-swing-world-z-start", type=float, default=1.68,
@@ -282,7 +311,124 @@ def parse_args():
         "--right-touchdown-flatten-ramp-out-s", type=float, default=0.08,
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--stop-common-z",
+        action="store_true",
+        help=(
+            "Enable stop-phase common-mode world-Z stabilization for both "
+            "feet before touchdown-Z arrest safety."
+        ),
+    )
+    parser.add_argument(
+        "--stop-common-z-start",
+        type=float,
+        default=1.84,
+        help="Trajectory time to latch the stop common-Z base-height anchor.",
+    )
+    parser.add_argument(
+        "--stop-common-z-end",
+        type=float,
+        default=2.30,
+        help=(
+            "Trajectory time through which stop common-Z stabilization is "
+            "held before its 0.10 s release tail."
+        ),
+    )
+    parser.add_argument(
+        "--stop-common-z-max-correction-m",
+        type=float,
+        default=0.004,
+        help=(
+            "Maximum downward common-mode world-Z correction in metres."
+        ),
+    )
+
+    parser.add_argument(
+        "--right-support-z-ceiling",
+        action="store_true",
+        help=(
+            "After confirmed RIGHT touchdown, prevent the support-foot "
+            "world-Z target from rising above the latched touchdown height "
+            "plus a small clearance."
+        ),
+    )
+    parser.add_argument(
+        "--right-support-z-ceiling-start",
+        type=float,
+        default=1.94,
+        help=(
+            "Trajectory time at which the confirmed RIGHT support Z ceiling "
+            "may begin limiting upward escape."
+        ),
+    )
+    parser.add_argument(
+        "--right-support-z-ceiling-clearance-m",
+        type=float,
+        default=0.0005,
+        help=(
+            "Allowed upward clearance above the latched RIGHT touchdown "
+            "world-Z height."
+        ),
+    )
+
     args = parser.parse_args()
+
+    if not math.isfinite(args.right_support_z_ceiling_start):
+        raise ValueError(
+            "--right-support-z-ceiling-start must be finite"
+        )
+    if args.right_support_z_ceiling_start < 0.0:
+        raise ValueError(
+            "--right-support-z-ceiling-start must be >= 0"
+        )
+    if not math.isfinite(
+        args.right_support_z_ceiling_clearance_m
+    ):
+        raise ValueError(
+            "--right-support-z-ceiling-clearance-m must be finite"
+        )
+    if args.right_support_z_ceiling_clearance_m < 0.0:
+        raise ValueError(
+            "--right-support-z-ceiling-clearance-m must be >= 0"
+        )
+
+    if args.right_support_z_ceiling:
+        print(
+            "[CONFIG] RIGHT support Z ceiling enabled: "
+            f"start={args.right_support_z_ceiling_start:.3f}s, "
+            f"clearance="
+            f"{1000.0 * args.right_support_z_ceiling_clearance_m:.2f} mm"
+        )
+
+    for name, value in (
+        ("stop_common_z_start", args.stop_common_z_start),
+        ("stop_common_z_end", args.stop_common_z_end),
+        (
+            "stop_common_z_max_correction_m",
+            args.stop_common_z_max_correction_m,
+        ),
+    ):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+
+    if args.stop_common_z_start < 0.0:
+        raise ValueError("--stop-common-z-start must be >= 0")
+    if args.stop_common_z_end < args.stop_common_z_start:
+        raise ValueError(
+            "--stop-common-z-end must be >= --stop-common-z-start"
+        )
+    if args.stop_common_z_max_correction_m < 0.0:
+        raise ValueError(
+            "--stop-common-z-max-correction-m must be >= 0"
+        )
+
+    if args.stop_common_z:
+        print(
+            "[CONFIG] stop-common-Z enabled: "
+            f"start={args.stop_common_z_start:.3f}, "
+            f"end={args.stop_common_z_end:.3f}, "
+            f"max={1000.0 * args.stop_common_z_max_correction_m:.1f} mm"
+        )
     swing_values = (
         args.swing_world_z_leg,
         args.swing_world_z_start,
@@ -528,6 +674,14 @@ def parse_args():
         parser.error("--touchdown-z-arrest-threshold-n must be positive")
     if args.touchdown_z_arrest_confirm_s < 0.0:
         parser.error("--touchdown-z-arrest-confirm-s must be non-negative")
+    if (
+        args.touchdown_z_arrest_detect_only
+        and not args.touchdown_z_arrest
+    ):
+        parser.error(
+            "--touchdown-z-arrest-detect-only requires "
+            "--touchdown-z-arrest"
+        )
     if args.touchdown_z_arrest_settle_depth_m < 0.0:
         parser.error(
             "--touchdown-z-arrest-settle-depth-m must be non-negative"
@@ -609,6 +763,56 @@ def parse_args():
             "--left-touchdown-z-arrest-start must be finite and "
             "non-negative"
         )
+    approach_z_values = (
+        args.left_touchdown_approach_z_start,
+        args.left_touchdown_approach_z_end,
+        args.left_touchdown_approach_z_max_down_speed_mps,
+    )
+    if args.left_touchdown_approach_z_rate_limit:
+        if not args.left_touchdown_z_arrest:
+            parser.error(
+                "--left-touchdown-approach-z-rate-limit requires "
+                "--left-touchdown-z-arrest"
+            )
+        if any(value is None for value in approach_z_values):
+            parser.error(
+                "--left-touchdown-approach-z-start, "
+                "--left-touchdown-approach-z-end, and "
+                "--left-touchdown-approach-z-max-down-speed-mps are "
+                "required when the limiter is enabled"
+            )
+        if not all(math.isfinite(value) for value in approach_z_values):
+            parser.error(
+                "LEFT touchdown approach Z rate-limit arguments must be "
+                "finite"
+            )
+        if args.left_touchdown_approach_z_start < 0.0:
+            parser.error(
+                "--left-touchdown-approach-z-start must be non-negative"
+            )
+        if (
+            args.left_touchdown_approach_z_end
+            < args.left_touchdown_approach_z_start
+        ):
+            parser.error(
+                "--left-touchdown-approach-z-end must be >= its start"
+            )
+        if args.left_touchdown_approach_z_max_down_speed_mps <= 0.0:
+            parser.error(
+                "--left-touchdown-approach-z-max-down-speed-mps must be "
+                "positive"
+            )
+    if (
+        args.touchdown_z_arrest_start is not None
+        and (
+            not math.isfinite(args.touchdown_z_arrest_start)
+            or args.touchdown_z_arrest_start < 0.0
+        )
+    ):
+        parser.error(
+            "--touchdown-z-arrest-start must be finite and non-negative"
+        )
+
     left_swing_world_z_numeric = (
         args.left_swing_world_z_start,
         args.left_swing_world_z_end,
@@ -1291,7 +1495,9 @@ class WorldFlatRightSolver:
               support_z_trajectory_time=None, impact_anchor=None,
               impact_anchor_trajectory_time=None,
               left_swing_world_z=None,
-              final_touchdown_z_arrest=None):
+              left_touchdown_approach_z_rate_limiter=None,
+              final_touchdown_z_arrest=None,
+              touchdown_z_arrest_detect_only=False):
         if self._can_reuse(frame, base_rotation, simulation_time):
             return self.cached_result
 
@@ -1469,16 +1675,47 @@ class WorldFlatRightSolver:
                 air_world_z = (
                     base_position[2] + (base_rotation @ target[:3, 3])[2]
                 )
+
+                stop_common_z_correction = max(
+                    0.0,
+                    float(
+                        getattr(
+                            self,
+                            "stop_common_world_z_correction_m",
+                            0.0,
+                        )
+                    ),
+                )
+
+                if stop_common_z_correction > 0.0:
+                    corrected_world_z = (
+                        air_world_z - stop_common_z_correction
+                    )
+                    target[2, 3] = (
+                        corrected_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
+                    air_world_z = corrected_world_z
+
                 arrest_diagnostics = touchdown_z_arrest.propose(
                     air_world_z, support_z_trajectory_time
                 )
                 target_world_z = arrest_diagnostics["target_world_z"]
-                if arrest_diagnostics["blocked"] > 0.0:
-                    target[2, 3] = (
+                if (
+                    arrest_diagnostics["blocked"] > 0.0
+                    and not touchdown_z_arrest_detect_only
+                ):
+                    nominal_target_z = target[2, 3]
+                    arrest_target_z = (
                         target_world_z - base_position[2]
                         - base_rotation[2, 0] * target[0, 3]
                         - base_rotation[2, 1] * target[1, 3]
                     ) / base_rotation[2, 2]
+                    target[2, 3] = (
+                        nominal_target_z
+                        + 0.50 * (arrest_target_z - nominal_target_z)
+                    )
         support_z_diagnostics = None
         if support_z_hold is not None:
             if base_position is None:
@@ -1546,6 +1783,39 @@ class WorldFlatRightSolver:
                         - base_rotation[2, 0] * target[0, 3]
                         - base_rotation[2, 1] * target[1, 3]
                     ) / base_rotation[2, 2]
+        approach_z_rate_limit_diagnostics = None
+        if left_touchdown_approach_z_rate_limiter is not None:
+            if base_position is None:
+                raise RuntimeError(
+                    "LEFT touchdown approach Z limiter requires base position"
+                )
+            desired_world_z = (
+                base_position[2] + (base_rotation @ target[:3, 3])[2]
+            )
+            approach_z_rate_limit_diagnostics = (
+                left_touchdown_approach_z_rate_limiter.propose(
+                    desired_world_z,
+                    support_z_trajectory_time,
+                    final_touchdown_z_arrest,
+                )
+            )
+            if approach_z_rate_limit_diagnostics["active"]:
+                if abs(base_rotation[2, 2]) <= 1e-6:
+                    z_valid = False
+                    print(
+                        f"[WARNING] LEFT touchdown approach Z limiter R22 "
+                        f"too small at frame {frame}; using the uncorrected "
+                        "target"
+                    )
+                else:
+                    limited_world_z = approach_z_rate_limit_diagnostics[
+                        "target_after"
+                    ]
+                    target[2, 3] = (
+                        limited_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
         final_arrest_diagnostics = None
         if final_touchdown_z_arrest is not None:
             if base_position is None:
@@ -1562,13 +1832,91 @@ class WorldFlatRightSolver:
                 air_world_z = (
                     base_position[2] + (base_rotation @ target[:3, 3])[2]
                 )
+
+                stop_common_z_correction = max(
+                    0.0,
+                    float(
+                        getattr(
+                            self,
+                            "stop_common_world_z_correction_m",
+                            0.0,
+                        )
+                    ),
+                )
+
+                if stop_common_z_correction > 0.0:
+                    corrected_world_z = (
+                        air_world_z - stop_common_z_correction
+                    )
+                    target[2, 3] = (
+                        corrected_world_z - base_position[2]
+                        - base_rotation[2, 0] * target[0, 3]
+                        - base_rotation[2, 1] * target[1, 3]
+                    ) / base_rotation[2, 2]
+                    air_world_z = corrected_world_z
+
                 final_arrest_diagnostics = (
                     final_touchdown_z_arrest.propose(
                         air_world_z, support_z_trajectory_time
                     )
                 )
                 target_world_z = final_arrest_diagnostics["target_world_z"]
-                if final_arrest_diagnostics["blocked"] > 0.0:
+
+                # TEMP DIAGNOSTIC:
+                # After confirmed LEFT touchdown, hold the sole world-Z
+                # bidirectionally for 0.12 s, then smoothly release to the
+                # existing touchdown-arrest target over 0.10 s.
+                short_anchor_active = False
+                anchor_state = final_arrest_diagnostics.get("state", "")
+                anchor_confirmed_time = final_arrest_diagnostics.get(
+                    "confirmed_time", math.nan
+                )
+                anchor_hold_world_z = final_arrest_diagnostics.get(
+                    "hold_world_z", math.nan
+                )
+
+                if (
+                    anchor_state == "LEFT_TOUCHDOWN_CONFIRMED"
+                    and math.isfinite(anchor_confirmed_time)
+                    and math.isfinite(anchor_hold_world_z)
+                ):
+                    anchor_elapsed = max(
+                        0.0,
+                        support_z_trajectory_time - anchor_confirmed_time,
+                    )
+
+                    anchor_hold_s = 0.12
+                    anchor_release_s = 0.10
+
+                    if anchor_elapsed <= anchor_hold_s:
+                        target_world_z = anchor_hold_world_z
+                        short_anchor_active = True
+
+                    elif anchor_elapsed <= anchor_hold_s + anchor_release_s:
+                        u = (
+                            (anchor_elapsed - anchor_hold_s)
+                            / anchor_release_s
+                        )
+                        u = max(0.0, min(1.0, u))
+                        beta = 3.0 * u * u - 2.0 * u * u * u
+
+                        target_world_z = (
+                            anchor_hold_world_z
+                            + beta
+                            * (
+                                target_world_z
+                                - anchor_hold_world_z
+                            )
+                        )
+                        short_anchor_active = True
+
+                # Make diagnostics/commit reflect the actual anchored target.
+                final_arrest_diagnostics["target_world_z"] = target_world_z
+
+                if (
+                    short_anchor_active
+                    or final_arrest_diagnostics["blocked"] > 0.0
+                ):
                     target[2, 3] = (
                         target_world_z - base_position[2]
                         - base_rotation[2, 0] * target[0, 3]
@@ -1583,6 +1931,10 @@ class WorldFlatRightSolver:
                 or (
                     left_swing_z_diagnostics is not None
                     and left_swing_z_diagnostics["active"]
+                )
+                or (
+                    approach_z_rate_limit_diagnostics is not None
+                    and approach_z_rate_limit_diagnostics["active"]
                 )
             )
             and not z_valid
@@ -1603,6 +1955,9 @@ class WorldFlatRightSolver:
             )
             result["left_swing_world_z"] = left_swing_z_diagnostics
             result["left_swing_world_z_success"] = False
+            result["left_touchdown_approach_z_rate_limit"] = (
+                approach_z_rate_limit_diagnostics
+            )
             self._cache(frame, simulation_time, base_rotation, result)
             return result
         seed = (
@@ -1705,6 +2060,10 @@ class WorldFlatRightSolver:
             final_touchdown_z_arrest.commit_successful_target(
                 final_arrest_diagnostics["target_world_z"]
             )
+        if valid and approach_z_rate_limit_diagnostics is not None:
+            left_touchdown_approach_z_rate_limiter.commit_successful(
+                approach_z_rate_limit_diagnostics
+            )
         if valid and left_swing_z_diagnostics is not None:
             solved_pose = self.chain.forward(candidate)
             solved_actual_world_z = (
@@ -1724,6 +2083,9 @@ class WorldFlatRightSolver:
             else arrest_diagnostics
         )
         result["left_swing_world_z"] = left_swing_z_diagnostics
+        result["left_touchdown_approach_z_rate_limit"] = (
+            approach_z_rate_limit_diagnostics
+        )
         result["left_support_z_hold"] = support_z_diagnostics
         result["left_support_impact_anchor"] = impact_anchor_diagnostics
         self._cache(frame, simulation_time, base_rotation, result)
@@ -1843,7 +2205,10 @@ class TouchdownZArrest:
     def __init__(self, threshold_n, confirm_duration, arm_trajectory_time,
                  recovery_speed_mps, dt, settle_depth_m=0.0,
                  settle_speed_mps=0.0, post_settle_release_s=None,
-                 post_settle_residual_ratio=0.0):
+                 post_settle_residual_ratio=0.0,
+                 support_z_ceiling_enabled=False,
+                 support_z_ceiling_start=0.0,
+                 support_z_ceiling_clearance_m=0.0):
         self.threshold_n = threshold_n
         self.confirm_duration = confirm_duration
         self.arm_trajectory_time = arm_trajectory_time
@@ -1853,6 +2218,11 @@ class TouchdownZArrest:
         self.settle_speed_mps = settle_speed_mps
         self.post_settle_release_s = post_settle_release_s
         self.post_settle_residual_ratio = post_settle_residual_ratio
+        self.support_z_ceiling_enabled = support_z_ceiling_enabled
+        self.support_z_ceiling_start = support_z_ceiling_start
+        self.support_z_ceiling_clearance_m = (
+            support_z_ceiling_clearance_m
+        )
         self.state = "SWING"
         self.unloaded_once = False
         self.last_contact_sequence = None
@@ -1993,6 +2363,37 @@ class TouchdownZArrest:
             air_world_z, original_target, release_beta,
             self.post_settle_residual_ratio,
         )
+
+        support_z_ceiling_active = False
+        support_z_ceiling_world_z = math.nan
+        support_z_ceiling_applied_m = 0.0
+
+        if (
+            self.support_z_ceiling_enabled
+            and self.state == "TOUCHDOWN_CONFIRMED"
+            and self.hold_world_z is not None
+            and trajectory_time + 1e-12
+            >= self.support_z_ceiling_start
+        ):
+            support_z_ceiling_world_z = (
+                self.hold_world_z
+                + self.support_z_ceiling_clearance_m
+            )
+
+            target_before_ceiling = target
+            target = min(
+                target,
+                support_z_ceiling_world_z,
+            )
+
+            support_z_ceiling_applied_m = max(
+                0.0,
+                target_before_ceiling - target,
+            )
+            support_z_ceiling_active = (
+                support_z_ceiling_applied_m > 1e-12
+            )
+
         if self.post_settle_release_s is None:
             release_state = "DISABLED"
         elif not math.isfinite(self.post_settle_release_start_time):
@@ -2024,6 +2425,14 @@ class TouchdownZArrest:
             "blocked_after_release": blocked_after_release,
             "target_before_release_world_z": original_target,
             "target_after_release_world_z": target,
+            "support_z_ceiling_enabled": (
+                self.support_z_ceiling_enabled
+            ),
+            "support_z_ceiling_active": support_z_ceiling_active,
+            "support_z_ceiling_world_z": support_z_ceiling_world_z,
+            "support_z_ceiling_applied_m": (
+                support_z_ceiling_applied_m
+            ),
         }
 
     def commit_successful_target(self, target_world_z):
@@ -2077,6 +2486,18 @@ class TouchdownZArrest:
             "air_world_z": target.get("air_world_z", math.nan),
             "target_world_z": target.get("target_world_z", math.nan),
             "blocked": target.get("blocked", 0.0),
+            "support_z_ceiling_enabled": target.get(
+                "support_z_ceiling_enabled", False
+            ),
+            "support_z_ceiling_active": target.get(
+                "support_z_ceiling_active", False
+            ),
+            "support_z_ceiling_world_z": target.get(
+                "support_z_ceiling_world_z", math.nan
+            ),
+            "support_z_ceiling_applied_m": target.get(
+                "support_z_ceiling_applied_m", 0.0
+            ),
             "false_contact_count": self.false_contact_count,
             "post_settle_release_enabled": target.get(
                 "post_settle_release_enabled",
@@ -2194,6 +2615,65 @@ class LeftSwingWorldZCorrection:
         if diagnostics["reference_pending"]:
             self.reference_actual_world_z = solved_actual_world_z
             self.reference_nominal_z = diagnostics["reference_nominal_z"]
+
+
+class LeftTouchdownApproachZRateLimiter:
+    """Limit only downward LEFT world-Z target speed before touchdown."""
+
+    def __init__(self, start, end, max_down_speed_mps, dt):
+        self.start = start
+        self.end = end
+        self.max_down_speed_mps = max_down_speed_mps
+        self.dt = dt
+        self.previous_successful_world_z = None
+        self.confirmation_committed = False
+        self.limited_frame_count = 0
+
+    def propose(self, desired_world_z, trajectory_time, touchdown_arrest):
+        touchdown_confirmed = (
+            touchdown_arrest is not None
+            and touchdown_arrest.state == "LEFT_TOUCHDOWN_CONFIRMED"
+        )
+        in_window = self.start <= trajectory_time <= self.end
+        active = in_window and (
+            not touchdown_confirmed or not self.confirmation_committed
+        )
+        previous = self.previous_successful_world_z
+        target_after = desired_world_z
+        requested_velocity = math.nan
+        output_velocity = math.nan
+        if active and previous is not None:
+            requested_velocity = (desired_world_z - previous) / self.dt
+            min_allowed_z = (
+                previous - self.max_down_speed_mps * self.dt
+            )
+            target_after = max(desired_world_z, min_allowed_z)
+            output_velocity = (target_after - previous) / self.dt
+        rate_limited = (
+            active and target_after > desired_world_z + 1e-15
+        )
+        return {
+            "enabled": True,
+            "active": active,
+            "rate_limited": rate_limited,
+            "desired_before": desired_world_z,
+            "target_after": target_after,
+            "requested_velocity": requested_velocity,
+            "output_velocity": output_velocity,
+            "limited_delta": max(0.0, target_after - desired_world_z),
+            "limited_frame_count": self.limited_frame_count,
+            "touchdown_confirmed": touchdown_confirmed,
+        }
+
+    def commit_successful(self, diagnostics):
+        if not diagnostics["active"]:
+            return
+        self.previous_successful_world_z = diagnostics["target_after"]
+        if diagnostics["rate_limited"]:
+            self.limited_frame_count += 1
+        diagnostics["limited_frame_count"] = self.limited_frame_count
+        if diagnostics["touchdown_confirmed"]:
+            self.confirmation_committed = True
 
 
 class LeftTouchdownZArrest:
@@ -2488,6 +2968,11 @@ def log_columns():
         + [f"LL{i}" for i in range(6)]
         + [
             "base_roll", "base_pitch", "base_yaw",
+            "stop_common_z_enabled",
+            "stop_common_z_beta",
+            "stop_common_z_anchor_base_z_m",
+            "stop_common_z_base_rise_m",
+            "stop_common_z_correction_m",
             "world_flat_active", "world_flat_solver_success",
             "swing_world_z_active", "swing_world_z_solver_success",
             "swing_world_z_correction_release_limiter_active",
@@ -2522,6 +3007,10 @@ def log_columns():
             "right_air_world_z_desired_m",
             "right_touchdown_world_z_target_m",
             "right_world_z_downward_blocked_m",
+            "right_support_z_ceiling_enabled",
+            "right_support_z_ceiling_active",
+            "right_support_z_ceiling_world_z_m",
+            "right_support_z_ceiling_applied_m",
             "touchdown_z_arrest_false_contact_count",
             "left_touchdown_z_arrest_enabled",
             "left_touchdown_z_arrest_state",
@@ -2549,6 +3038,15 @@ def log_columns():
             "left_swing_world_z_clamped_correction_m",
             "left_swing_world_z_applied_correction_m",
             "left_swing_world_z_solver_success",
+            "left_touchdown_approach_z_rate_limit_enabled",
+            "left_touchdown_approach_z_rate_limit_active",
+            "left_touchdown_approach_z_rate_limited",
+            "left_touchdown_approach_z_desired_before_m",
+            "left_touchdown_approach_z_target_after_m",
+            "left_touchdown_approach_z_requested_velocity_mps",
+            "left_touchdown_approach_z_output_velocity_mps",
+            "left_touchdown_approach_z_limited_delta_m",
+            "left_touchdown_approach_z_limited_frame_count",
             "left_support_z_hold_enabled", "left_support_z_hold_active",
             "left_support_z_hold_world_z",
             "left_support_z_release_active", "left_support_z_release_beta",
@@ -2669,15 +3167,24 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
               pitch_diagnostics=None, touchdown_z_arrest_diagnostics=None,
               left_touchdown_z_arrest_diagnostics=None,
               left_swing_world_z_diagnostics=None,
+              left_touchdown_approach_z_rate_limit_diagnostics=None,
               fore_aft_sign_test_diagnostics=None,
               left_support_z_diagnostics=None,
               touchdown_flatten_diagnostics_row=None,
               pitch_handoff_diagnostics=None,
-              left_support_impact_anchor_diagnostics=None):
+              left_support_impact_anchor_diagnostics=None,
+              stop_common_z_diagnostics=None):
     desired_rpy = (
         np.full(3, math.nan) if solve_result is None
         else solve_result["desired_rpy"]
     )
+    stop_common_z = stop_common_z_diagnostics or {
+        "enabled": False,
+        "beta": 0.0,
+        "anchor_base_z": math.nan,
+        "base_rise": 0.0,
+        "correction": 0.0,
+    }
     row = {
         "publish_index": publish_index,
         "simulation_time": finite_text(simulation_time),
@@ -2687,6 +3194,17 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "base_roll": finite_text(base_rpy[0]),
         "base_pitch": finite_text(base_rpy[1]),
         "base_yaw": finite_text(base_rpy[2]),
+        "stop_common_z_enabled": int(stop_common_z["enabled"]),
+        "stop_common_z_beta": finite_text(stop_common_z["beta"]),
+        "stop_common_z_anchor_base_z_m": finite_text(
+            stop_common_z["anchor_base_z"]
+        ),
+        "stop_common_z_base_rise_m": finite_text(
+            stop_common_z["base_rise"]
+        ),
+        "stop_common_z_correction_m": finite_text(
+            stop_common_z["correction"]
+        ),
         "world_flat_active": int(world_flat_active),
         "world_flat_solver_success": int(
             solve_result is not None and solve_result["world_flat_success"]
@@ -2772,6 +3290,10 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         "settle_applied_m": 0.0,
         "air_world_z": math.nan, "target_world_z": math.nan,
         "blocked": 0.0, "false_contact_count": 0,
+        "support_z_ceiling_enabled": False,
+        "support_z_ceiling_active": False,
+        "support_z_ceiling_world_z": math.nan,
+        "support_z_ceiling_applied_m": 0.0,
         "post_settle_release_enabled": False,
         "post_settle_release_state": "DISABLED",
         "post_settle_release_start_time": math.nan,
@@ -2839,6 +3361,18 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
             arrest["target_world_z"]
         ),
         "right_world_z_downward_blocked_m": finite_text(arrest["blocked"]),
+        "right_support_z_ceiling_enabled": int(
+            arrest["support_z_ceiling_enabled"]
+        ),
+        "right_support_z_ceiling_active": int(
+            arrest["support_z_ceiling_active"]
+        ),
+        "right_support_z_ceiling_world_z_m": finite_text(
+            arrest["support_z_ceiling_world_z"]
+        ),
+        "right_support_z_ceiling_applied_m": finite_text(
+            arrest["support_z_ceiling_applied_m"]
+        ),
         "touchdown_z_arrest_false_contact_count": arrest["false_contact_count"],
     })
     left_arrest = left_touchdown_z_arrest_diagnostics or {
@@ -2931,6 +3465,48 @@ def write_log(writer, publish_index, simulation_time, trajectory_time,
         ),
         "left_swing_world_z_solver_success": int(
             left_swing_z["solver_success"]
+        ),
+    })
+    approach_z_rate_limit = (
+        left_touchdown_approach_z_rate_limit_diagnostics or {
+            "enabled": False,
+            "active": False,
+            "rate_limited": False,
+            "desired_before": math.nan,
+            "target_after": math.nan,
+            "requested_velocity": math.nan,
+            "output_velocity": math.nan,
+            "limited_delta": 0.0,
+            "limited_frame_count": 0,
+        }
+    )
+    row.update({
+        "left_touchdown_approach_z_rate_limit_enabled": int(
+            approach_z_rate_limit["enabled"]
+        ),
+        "left_touchdown_approach_z_rate_limit_active": int(
+            approach_z_rate_limit["active"]
+        ),
+        "left_touchdown_approach_z_rate_limited": int(
+            approach_z_rate_limit["rate_limited"]
+        ),
+        "left_touchdown_approach_z_desired_before_m": finite_text(
+            approach_z_rate_limit["desired_before"]
+        ),
+        "left_touchdown_approach_z_target_after_m": finite_text(
+            approach_z_rate_limit["target_after"]
+        ),
+        "left_touchdown_approach_z_requested_velocity_mps": finite_text(
+            approach_z_rate_limit["requested_velocity"]
+        ),
+        "left_touchdown_approach_z_output_velocity_mps": finite_text(
+            approach_z_rate_limit["output_velocity"]
+        ),
+        "left_touchdown_approach_z_limited_delta_m": finite_text(
+            approach_z_rate_limit["limited_delta"]
+        ),
+        "left_touchdown_approach_z_limited_frame_count": (
+            approach_z_rate_limit["limited_frame_count"]
         ),
     })
     support_z = left_support_z_diagnostics or {
@@ -3529,6 +4105,22 @@ def main():
         )
     else:
         print("touchdown-Z-arrest=disabled")
+    touchdown_z_arrest_start = (
+        args.swing_world_z_start
+        if args.touchdown_z_arrest_start is None
+        else args.touchdown_z_arrest_start
+    )
+
+    if args.touchdown_z_arrest:
+        print(
+            "touchdown-Z-arrest-start="
+            f"{touchdown_z_arrest_start:.3f} sim-s"
+        )
+        print(
+            "touchdown-Z-arrest-detect-only="
+            f"{int(args.touchdown_z_arrest_detect_only)}"
+        )
+
     if args.touchdown_z_arrest_post_settle_release_s is None:
         print("touchdown-Z-arrest-post-settle-release=disabled")
     else:
@@ -3556,6 +4148,16 @@ def main():
         )
     else:
         print("left-touchdown-Z-arrest=disabled")
+    if args.left_touchdown_approach_z_rate_limit:
+        print(
+            "LEFT-touchdown-approach-Z-rate-limit=enabled "
+            f"start={args.left_touchdown_approach_z_start:.3f} "
+            f"end={args.left_touchdown_approach_z_end:.3f} "
+            "max-down-speed="
+            f"{args.left_touchdown_approach_z_max_down_speed_mps:.6f} m/s"
+        )
+    else:
+        print("LEFT-touchdown-approach-Z-rate-limit=disabled")
     if args.left_swing_world_z:
         print(
             "left-swing-world-Z=enabled "
@@ -3687,13 +4289,16 @@ def main():
             TouchdownZArrest(
                 args.touchdown_z_arrest_threshold_n,
                 args.touchdown_z_arrest_confirm_s,
-                args.swing_world_z_start,
+                touchdown_z_arrest_start,
                 args.swing_world_z_max_correction_release_speed_mps,
                 args.dt,
                 args.touchdown_z_arrest_settle_depth_m,
                 args.touchdown_z_arrest_settle_speed_mps,
                 args.touchdown_z_arrest_post_settle_release_s,
                 args.touchdown_z_arrest_post_settle_residual_ratio,
+                args.right_support_z_ceiling,
+                args.right_support_z_ceiling_start,
+                args.right_support_z_ceiling_clearance_m,
             )
             if args.touchdown_z_arrest else None
         )
@@ -3715,6 +4320,15 @@ def main():
                 args.left_swing_world_z_max_correction_m,
             )
             if args.left_swing_world_z else None
+        )
+        left_touchdown_approach_z_rate_limiter = (
+            LeftTouchdownApproachZRateLimiter(
+                args.left_touchdown_approach_z_start,
+                args.left_touchdown_approach_z_end,
+                args.left_touchdown_approach_z_max_down_speed_mps,
+                args.dt,
+            )
+            if args.left_touchdown_approach_z_rate_limit else None
         )
         left_support_z_hold = (
             LeftSupportZHold(
@@ -3738,6 +4352,7 @@ def main():
         next_frame = 0
         replay_finished_at = None
         feedback_release_pending = {"RL": False, "LL": False}
+        stop_common_z_anchor_base_z = None
         replay_base_x = None
         replay_base_pitch = None
         derivative_previous_pitch = None
@@ -3781,6 +4396,66 @@ def main():
                 and trajectory_elapsed + 1e-9 >= next_frame * args.dt
             ):
                 trajectory_time = next_frame * args.dt
+
+                stop_common_z_beta = 0.0
+                stop_common_z_base_rise = 0.0
+                stop_common_z_correction = 0.0
+
+                if args.stop_common_z:
+                    if (
+                        stop_common_z_anchor_base_z is None
+                        and trajectory_time + 1e-12
+                        >= args.stop_common_z_start
+                    ):
+                        stop_common_z_anchor_base_z = float(
+                            base_position[2]
+                        )
+
+                    if stop_common_z_anchor_base_z is not None:
+                        stop_common_z_beta = feedback_beta(
+                            "REPLAY",
+                            trajectory_time,
+                            args.stop_common_z_start,
+                            args.stop_common_z_end,
+                            0.05,
+                            0.10,
+                        )
+
+                        stop_common_z_base_rise = max(
+                            0.0,
+                            float(base_position[2])
+                            - stop_common_z_anchor_base_z,
+                        )
+
+                        stop_common_z_correction = (
+                            stop_common_z_beta
+                            * min(
+                                stop_common_z_base_rise,
+                                args.stop_common_z_max_correction_m,
+                            )
+                        )
+
+                stop_common_z_diagnostics = {
+                    "enabled": bool(args.stop_common_z),
+                    "beta": stop_common_z_beta,
+                    "anchor_base_z": (
+                        math.nan
+                        if stop_common_z_anchor_base_z is None
+                        else stop_common_z_anchor_base_z
+                    ),
+                    "base_rise": stop_common_z_base_rise,
+                    "correction": stop_common_z_correction,
+                }
+
+                # Both legs receive the exact same requested common-mode
+                # correction. Each leg's existing touchdown arrest remains
+                # downstream and may safely block excessive downward motion.
+                right_solver.stop_common_world_z_correction_m = (
+                    stop_common_z_correction
+                )
+                left_solver.stop_common_world_z_correction_m = (
+                    stop_common_z_correction
+                )
                 nominal = targets[next_frame]
                 if replay_base_x is None:
                     replay_base_x = base_x
@@ -4118,6 +4793,9 @@ def main():
                         base_position=base_position,
                         touchdown_z_arrest=touchdown_z_arrest,
                         support_z_trajectory_time=trajectory_time,
+                        touchdown_z_arrest_detect_only=(
+                            args.touchdown_z_arrest_detect_only
+                        ),
                     )
                     if (
                         solve_result["success"]
@@ -4186,6 +4864,7 @@ def main():
                     or left_support_impact_anchor_beta > 0.0
                     or left_touchdown_z_arrest is not None
                     or left_swing_world_z is not None
+                    or left_touchdown_approach_z_rate_limiter is not None
                 ):
                     left_solve_result = left_solver.solve(
                         next_frame, sim_time, base_rotation,
@@ -4201,6 +4880,9 @@ def main():
                         impact_anchor=left_support_impact_anchor,
                         impact_anchor_trajectory_time=trajectory_time,
                         left_swing_world_z=left_swing_world_z,
+                        left_touchdown_approach_z_rate_limiter=(
+                            left_touchdown_approach_z_rate_limiter
+                        ),
                         final_touchdown_z_arrest=(
                             left_touchdown_z_arrest
                         ),
@@ -4319,6 +5001,12 @@ def main():
                             ),
                         }
                     ),
+                    left_touchdown_approach_z_rate_limit_diagnostics=(
+                        None if left_solve_result is None
+                        else left_solve_result.get(
+                            "left_touchdown_approach_z_rate_limit"
+                        )
+                    ),
                     fore_aft_sign_test_diagnostics=fore_aft_diagnostics,
                     left_support_z_diagnostics=(
                         None if left_solve_result is None
@@ -4326,6 +5014,7 @@ def main():
                     ),
                     touchdown_flatten_diagnostics_row=flatten_diagnostics,
                     pitch_handoff_diagnostics=pitch_handoff_diagnostics,
+                    stop_common_z_diagnostics=stop_common_z_diagnostics,
                     left_support_impact_anchor_diagnostics=(
                         left_support_impact_anchor.diagnostics(trajectory_time)
                     ),

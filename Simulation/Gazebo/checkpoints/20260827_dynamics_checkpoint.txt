@@ -1,0 +1,67 @@
+IRC-STEP Dynamics checkpoint - 2026-08-27
+
+CURRENT CODE STATE
+- publisher contains Codex-added LEFT touchdown approach world-Z downward rate limiter.
+- limiter is default OFF.
+- publisher also contains TEMP diagnostic LEFT post-touchdown short Z anchor:
+  * LEFT_TOUCHDOWN_CONFIRMED after 0.12 s bidirectional world-Z hold
+  * then 0.10 s smooth release
+- backup before short anchor:
+  publish_leg_walk_csv_sdf6dik_world_flat_simtime.py.bak_before_left_td_short_anchor
+- RIGHT touchdown Z correction remains hardcoded scale 0.50.
+- RIGHT touchdown flatten remains -0.5 deg baseline.
+- strong LEFT support-Z hold remains excluded.
+
+LATEST TEST CONDITION
+- original leftground220 planner/trajectory
+- replay-end 2.44
+- LEFT touchdown arrest ON, start 1.70
+- LEFT approach Z-rate limiter OFF
+- TEMP short post-touchdown Z anchor active in code
+- no llzhumpcap
+- no LLX freeze
+- no LAP modification
+
+LATEST LOGS
+Simulation/Gazebo/logs/walk_z050_lefttd170_shortanchor_balance.csv
+Simulation/Gazebo/logs/walk_z050_lefttd170_shortanchor_joint_tracking.csv
+Simulation/Gazebo/logs/walk_z050_lefttd170_shortanchor_commands.csv
+
+REFERENCE BASE
+Simulation/Gazebo/logs/walk_z050_lap0_replay244_lefttd170_balance.csv
+
+BASE vs SHORTANCHOR
+BASE:
+- bilateral >=10N: 17/50 = 34.0%
+- RIGHT Fz <5N: 21/50
+- roll 2.40->2.72: -4.749 deg
+- yaw 2.40->2.72: +6.709 deg
+
+SHORTANCHOR:
+- bilateral >=10N: 18/50 = 36.0%
+- RIGHT Fz <5N: 17/50
+- roll 2.40->2.72: -6.266 deg
+- yaw 2.40->2.72: +9.675 deg
+
+VISUAL
+- User reports SHORTANCHOR looks the most stable among tests so far.
+- Remaining symptom: slight leftward rotation.
+- However numerical yaw/roll over 2.40~2.72 are worse than BASE, so do NOT yet declare SHORTANCHOR the final baseline.
+
+IMPORTANT CAUSAL FINDINGS
+1. LEFT touchdown approach-rate limiter successfully capped downward target speed to -20 mm/s.
+2. That test did not solve support loss.
+3. Final LEFT touchdown arrest correctly blocked downward target after confirmation.
+4. Nominal LEFT world-Z rises again after touchdown:
+   traj1.91 hold~9.42 mm
+   1.92 desired4.08 -> final9.42
+   1.95 desired8.89 -> final9.42
+   1.96 desired11.60 -> final11.60
+   1.98 desired15.25 -> final15.25
+5. Short post-touchdown Z anchor visually improves stability, but residual yaw remains.
+6. Next task: analyze SHORTANCHOR residual rotation onset.
+   Determine whether remaining yaw is driven by:
+   - lateral/roll dynamics,
+   - contact yaw moment / foot geometry,
+   - or short-anchor release timing.
+   Do NOT restart broad Z sweeps before this analysis.
