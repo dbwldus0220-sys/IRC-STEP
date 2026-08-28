@@ -118,6 +118,28 @@ def parse_args():
         help="optional per-leg feedback command rate limit",
     )
     parser.add_argument(
+        "--right-knee-stiffness-schedule", action="store_true",
+        help=(
+            "diagnostic: emulate a higher RIGHT knee proportional stiffness "
+            "by augmenting its published position target from measured error"
+        ),
+    )
+    parser.add_argument(
+        "--right-knee-stiffness-start", type=float, default=1.40,
+        help="trajectory time where RIGHT knee stiffness ramp begins",
+    )
+    parser.add_argument(
+        "--right-knee-stiffness-end", type=float, default=1.65,
+        help="trajectory time where RIGHT knee stiffness ramp reaches full ratio",
+    )
+    parser.add_argument(
+        "--right-knee-stiffness-ratio", type=float, default=1.25,
+        help=(
+            "effective stiffness ratio relative to the SDF controller; "
+            "1.25 approximates P80 -> P100"
+        ),
+    )
+    parser.add_argument(
         "--right-swing-lateral-scale", type=float,
         help=(
             "optional scale in (0, 1] for RIGHT nominal base-frame X "
@@ -1861,62 +1883,7 @@ class WorldFlatRightSolver:
                     )
                 )
                 target_world_z = final_arrest_diagnostics["target_world_z"]
-
-                # TEMP DIAGNOSTIC:
-                # After confirmed LEFT touchdown, hold the sole world-Z
-                # bidirectionally for 0.12 s, then smoothly release to the
-                # existing touchdown-arrest target over 0.10 s.
-                short_anchor_active = False
-                anchor_state = final_arrest_diagnostics.get("state", "")
-                anchor_confirmed_time = final_arrest_diagnostics.get(
-                    "confirmed_time", math.nan
-                )
-                anchor_hold_world_z = final_arrest_diagnostics.get(
-                    "hold_world_z", math.nan
-                )
-
-                if (
-                    anchor_state == "LEFT_TOUCHDOWN_CONFIRMED"
-                    and math.isfinite(anchor_confirmed_time)
-                    and math.isfinite(anchor_hold_world_z)
-                ):
-                    anchor_elapsed = max(
-                        0.0,
-                        support_z_trajectory_time - anchor_confirmed_time,
-                    )
-
-                    anchor_hold_s = 0.12
-                    anchor_release_s = 0.10
-
-                    if anchor_elapsed <= anchor_hold_s:
-                        target_world_z = anchor_hold_world_z
-                        short_anchor_active = True
-
-                    elif anchor_elapsed <= anchor_hold_s + anchor_release_s:
-                        u = (
-                            (anchor_elapsed - anchor_hold_s)
-                            / anchor_release_s
-                        )
-                        u = max(0.0, min(1.0, u))
-                        beta = 3.0 * u * u - 2.0 * u * u * u
-
-                        target_world_z = (
-                            anchor_hold_world_z
-                            + beta
-                            * (
-                                target_world_z
-                                - anchor_hold_world_z
-                            )
-                        )
-                        short_anchor_active = True
-
-                # Make diagnostics/commit reflect the actual anchored target.
-                final_arrest_diagnostics["target_world_z"] = target_world_z
-
-                if (
-                    short_anchor_active
-                    or final_arrest_diagnostics["blocked"] > 0.0
-                ):
+                if final_arrest_diagnostics["blocked"] > 0.0:
                     target[2, 3] = (
                         target_world_z - base_position[2]
                         - base_rotation[2, 0] * target[0, 3]
@@ -2746,6 +2713,7 @@ class LeftTouchdownZArrest:
         return {
             "state": self.state,
             "active": self.state == "LEFT_TOUCHDOWN_CONFIRMED",
+            "confirmed_time": self.confirmed_time,
             "air_world_z": air_world_z,
             "target_world_z": target_world_z,
             "blocked": max(0.0, target_world_z - air_world_z),
@@ -4204,6 +4172,31 @@ def main():
         )
     else:
         print("RIGHT-touchdown-flatten=disabled")
+    if args.right_knee_stiffness_schedule:
+        if args.right_knee_stiffness_start < 0.0:
+            raise RuntimeError(
+                "--right-knee-stiffness-start must be non-negative"
+            )
+        if (
+            args.right_knee_stiffness_end
+            <= args.right_knee_stiffness_start
+        ):
+            raise RuntimeError(
+                "--right-knee-stiffness-end must be greater than start"
+            )
+        if args.right_knee_stiffness_ratio < 1.0:
+            raise RuntimeError(
+                "--right-knee-stiffness-ratio must be >= 1.0"
+            )
+        print(
+            "RIGHT-knee-stiffness-schedule=enabled "
+            f"start={args.right_knee_stiffness_start:.3f} "
+            f"end={args.right_knee_stiffness_end:.3f} "
+            f"ratio={args.right_knee_stiffness_ratio:.3f}"
+        )
+    else:
+        print("RIGHT-knee-stiffness-schedule=disabled")
+
     print(f"frame0 Candidate B exact={'YES' if frame_zero_exact else 'NO'}")
     print(f"nominal SDF FK finite={'YES' if nominal_poses_finite else 'NO'}")
     if not frame_zero_exact or not nominal_poses_finite:
@@ -4224,6 +4217,7 @@ def main():
             require_joint_state=(
                 args.touchdown_support_hold
                 or args.left_support_impact_anchor
+                or args.right_knee_stiffness_schedule
             ),
             left_contact_topic=(
                 DEFAULT_LEFT_CONTACT_TOPIC
@@ -4234,6 +4228,7 @@ def main():
             args.touchdown_support_hold
             or args.touchdown_z_arrest
             or args.left_touchdown_z_arrest
+            or args.right_knee_stiffness_schedule
         ) else None
     )
 
@@ -4939,6 +4934,75 @@ def main():
                         "requested_speed_deg_s": math.degrees(requested_speed),
                         "published_speed_deg_s": math.degrees(published_speed),
                     }
+                if args.right_knee_stiffness_schedule:
+                    if touchdown_measurements is None:
+                        raise RuntimeError(
+                            "RIGHT knee stiffness schedule requires "
+                            "touchdown measurements"
+                        )
+
+                    (
+                        _sched_right_fz,
+                        _sched_right_sequence,
+                        _sched_left_fz,
+                        _sched_left_sequence,
+                        schedule_right_q,
+                        _schedule_left_q,
+                    ) = touchdown_measurements.snapshot()
+
+                    if (
+                        trajectory_time
+                        <= args.right_knee_stiffness_start
+                    ):
+                        knee_stiffness_beta = 0.0
+                    elif (
+                        trajectory_time
+                        >= args.right_knee_stiffness_end
+                    ):
+                        knee_stiffness_beta = 1.0
+                    else:
+                        knee_stiffness_beta = (
+                            trajectory_time
+                            - args.right_knee_stiffness_start
+                        ) / (
+                            args.right_knee_stiffness_end
+                            - args.right_knee_stiffness_start
+                        )
+
+                    if knee_stiffness_beta > 0.0:
+                        actual_right_knee = float(schedule_right_q[3])
+
+                        if not math.isfinite(actual_right_knee):
+                            raise RuntimeError(
+                                "RIGHT knee stiffness schedule has no "
+                                "finite measured right_knee_pitch_joint"
+                            )
+
+                        right_q = leg_vector(final, "RL").copy()
+                        base_right_knee_target = float(right_q[3])
+
+                        effective_ratio = (
+                            1.0
+                            + knee_stiffness_beta
+                            * (
+                                args.right_knee_stiffness_ratio
+                                - 1.0
+                            )
+                        )
+
+                        right_q[3] = (
+                            actual_right_knee
+                            + effective_ratio
+                            * (
+                                base_right_knee_target
+                                - actual_right_knee
+                            )
+                        )
+
+                        final = set_leg_vector(
+                            final, "RL", right_q
+                        )
+
                 if not all(math.isfinite(value) for value in final.values()):
                     raise RuntimeError("refusing to publish non-finite joint target")
                 max_delta, max_velocity = safety.check(final, sim_time)
